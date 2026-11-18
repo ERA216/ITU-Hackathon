@@ -6,7 +6,8 @@
 <title>Чистый счёт: панель аналитика</title>
 <style>
   :root { --bg:#fff; --card:#fff; --ink:#1d1d1e; --muted:#587366; --line:#d6eadf;
-          --brand:#00ab75; --brand-ink:#00875c; --fill:#e6f3ed; --warn:#c62828; --warn-bg:#fdeeee; --ok:#00875c; --ok-bg:#e6f7f0; --amber:#6b4a00; --amber-bg:#fff5df; }
+          --brand:#00ab75; --brand-ink:#00875c; --fill:#e6f3ed; --warn:#c62828; --warn-bg:#fdeeee; --ok:#00875c; --ok-bg:#e6f7f0; --amber:#6b4a00; --amber-bg:#fff5df;
+          --blue:#1f3a8a; --blue-bg:#eef2fd; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:15px/1.45 "Roboto Flex", Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; }
@@ -70,6 +71,17 @@
   .timeline { margin:6px 0 0; padding:0; list-style:none; }
   .timeline li { display:grid; grid-template-columns:118px 1fr; gap:10px; }
   .timeline .who { color:var(--muted); font-size:13px; }
+  /* Граф денег: счета и переводы вокруг случая. */
+  .wrap > div { min-width:0; }   /* иначе широкий граф растягивает колонку и всю страницу */
+  .graph { overflow-x:auto; }
+  .graph svg { display:block; }
+  .graph .gnode[data-gopen] { cursor:pointer; }
+  .graph .gnode[data-gopen]:hover rect { stroke-width:2.5; }
+  .legend { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:12px; color:var(--muted); margin-top:10px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .legend i { display:inline-block; width:24px; border-top:2px solid #587366; }
+  .legend i.wait { border-top:2px dashed #b07d00; } .legend i.stop { border-top:2px dashed #9fb3aa; }
+  .legend b { display:inline-block; width:14px; height:12px; border-radius:3px; border:1px solid; }
   /* Общее верхнее меню: четыре страницы проекта, текущая выделена. */
   .topbar { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:10px 20px; background:#fff; border-bottom:1px solid #d6eadf; }
   .topbar .brand { font-weight:700; font-size:17px; color:#1d1d1e; text-decoration:none; white-space:nowrap; }
@@ -196,6 +208,103 @@ async function loadBusiness() {
     catch (e) { b.disabled = false; alertBox(e.message); }
   });
 }
+// Граф денег: столбцы слева направо (откуда пришли деньги → куда ушли), стрелка — переводы между двумя счетами.
+function drawGraph(host, g, currentCase) {
+  const NW = 176, NH = 64, CW = 290, GY = 22, PAD = 6;
+  const cols = {};
+  g.nodes.forEach(n => (cols[n.col] = cols[n.col] || []).push(n));
+  // Порядок внутри столбца: счёт ставим напротив тех, с кем он связан, — так стрелки меньше пересекаются.
+  const order = Object.keys(cols).map(Number).sort((a, b) => a - b), at = {};
+  const reindex = () => order.forEach(c => cols[c].forEach((n, i) => { at[n.id] = i - (cols[c].length - 1) / 2; }));
+  const near = (n, side) => {
+    const v = g.edges.filter(e => e[side === 'to' ? 'from' : 'to'] === n.id).map(e => at[e[side]]).filter(x => x !== undefined);
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : at[n.id];
+  };
+  reindex();
+  for (let pass = 0; pass < 2; pass++) {
+    for (const c of order.slice(0, -1).reverse()) { cols[c].sort((a, b) => (a.role === 'group') - (b.role === 'group') || near(a, 'to') - near(b, 'to')); reindex(); }
+    for (const c of order.slice(1)) { cols[c].sort((a, b) => (a.role === 'group') - (b.role === 'group') || near(a, 'from') - near(b, 'from')); reindex(); }
+  }
+  const ncol = Math.max(...g.nodes.map(n => n.col)) + 1;
+  const rows = Math.max(...Object.values(cols).map(a => a.length));
+  const W = (ncol - 1) * CW + NW + 2 * PAD, H = rows * (NH + GY) - GY + 2 * PAD;
+  const pos = {};
+  for (const [c, arr] of Object.entries(cols)) {
+    const top = PAD + (H - 2 * PAD - (arr.length * (NH + GY) - GY)) / 2;
+    arr.forEach((n, i) => { pos[n.id] = {x: PAD + c * CW, y: top + i * (NH + GY)}; });
+  }
+  const cut = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
+  const LINE = {done: ['#587366', ''], held: ['#b07d00', '6 4'], pending: ['#b07d00', '6 4'], cancelled: ['#9fb3aa', '6 4']};
+  const NOTE = {held: 'на паузе', pending: 'уйдёт позже', cancelled: 'отменён'};
+  let edges = '';
+  const labels = [];
+  const fanIn = {}, fanOut = {};
+  g.edges.forEach(e => { fanIn[e.to] = (fanIn[e.to] || 0) + 1; fanOut[e.from] = (fanOut[e.from] || 0) + 1; });
+  for (const e of g.edges) {
+    const a = pos[e.from], b = pos[e.to];
+    if (!a || !b) continue;
+    const [color, dash] = LINE[e.status] || LINE.done;
+    const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x - 2, y2 = b.y + NH / 2, mx = (x1 + x2) / 2;
+    edges += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="2"
+      ${dash ? `stroke-dasharray="${dash}"` : ''} marker-end="url(#arr-${e.status in LINE ? e.status : 'done'})"/>`;
+    // Подпись — там, где стрелки расходятся: у счёта, куда сходится много стрелок, — ближе к отправителю,
+    // у счёта, откуда много стрелок выходит, — ближе к получателю. Так подписи не налезают друг на друга.
+    const t0 = fanIn[e.to] > 1 && fanOut[e.from] <= 1 ? 0.3 : fanOut[e.from] > 1 && fanIn[e.to] <= 1 ? 0.72 : 0.45;
+    const bez = (t, p0, p1, p2, p3) => (1 - t) ** 3 * p0 + 3 * (1 - t) ** 2 * t * p1 + 3 * (1 - t) * t * t * p2 + t ** 3 * p3;
+    const lines = [[money(e.amount), 12, 600, '#1d1d1e']];
+    const plural = n => n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? 'перевода' : 'переводов';
+    if (e.count > 1) lines.push([`${e.count} ${plural(e.count)}`, 11, 400, '#2f4a3f']);
+    if (e.returned) lines.push(['вернули', 11, 400, '#00875c'], [money(e.returned), 11, 400, '#00875c']);
+    else if (NOTE[e.status]) lines.push([NOTE[e.status], 11, 400, color]);
+    const w = Math.max(...lines.map(l => l[0].length * l[1] * 0.56)) + 12, h = lines.length * 14 + 6;
+    // Подпись не заезжает на прямоугольники счетов: держим её в промежутке сразу после отправителя
+    // (стрелка может перескакивать через столбец, а между столбцами счетов нет).
+    const gapEnd = Math.min(x2, x1 + CW - NW - 2);
+    const raw = bez(t0, x1, mx, mx, x2);
+    const lx = gapEnd - x1 > w + 12 ? Math.min(Math.max(raw, x1 + w / 2 + 6), gapEnd - w / 2 - 6) : (x1 + gapEnd) / 2;
+    const ly = bez(Math.min(1, Math.max(0, (lx - x1) / (x2 - x1))), y1, y1, y2, y2);
+    labels.push({x: lx, y: ly, w, h, lines});
+  }
+  // Подписи, которые всё же перекрываются (из одного счёта выходит несколько стрелок), раздвигаем по вертикали.
+  for (let pass = 0; pass < 40; pass++) {
+    let moved = false;
+    for (let i = 0; i < labels.length; i++) for (let j = i + 1; j < labels.length; j++) {
+      const A = labels[i], B = labels[j];
+      const dy = (A.h + B.h) / 2 + 3 - Math.abs(A.y - B.y);
+      if (Math.abs(A.x - B.x) < (A.w + B.w) / 2 && dy > 0) {
+        const s = A.y <= B.y ? 1 : -1;
+        A.y -= s * dy / 2; B.y += s * dy / 2; moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  const labelSvg = labels.map(L => `<g><rect x="${L.x - L.w / 2}" y="${L.y - L.h / 2}" width="${L.w}" height="${L.h}" rx="6" fill="#fff" fill-opacity="0.94"/>` +
+    L.lines.map((l, i) => `<text x="${L.x}" y="${L.y - L.h / 2 + 15 + i * 14}" text-anchor="middle" font-size="${l[1]}" font-weight="${l[2]}" fill="${l[3]}">${esc(l[0])}</text>`).join('') + '</g>').join('');
+  let nodes = '';
+  for (const n of g.nodes) {
+    const p = pos[n.id];
+    const look = n.role === 'victim' ? ['var(--blue-bg)', 'var(--blue)'] : n.status === 'blocked' ? ['var(--warn-bg)', 'var(--warn)']
+      : n.status === 'limited' ? ['var(--amber-bg)', 'var(--amber)'] : n.role === 'group' ? ['#fff', 'var(--line)'] : ['var(--fill)', 'var(--fill)'];
+    const stroke = n.role === 'current' ? 'var(--brand)' : look[1];
+    const state = n.role === 'group' ? 'свёрнуты, чтобы граф читался'
+      : n.status === 'blocked' ? 'Счёт приостановлен' : n.status === 'limited' ? `Заморожено ${money(n.frozen)}`
+      : n.role === 'victim' ? 'Пострадавший' : 'Счёт активен';
+    const meta = n.role === 'group' ? '' : [n.role === 'current' ? 'этот случай' : '', `счёту ${n.age_days} дн.`, n.kind === 'ip' ? 'ИП' : '',
+      n.afc === 'grey' ? 'серый список' : n.afc === 'black' ? 'чёрный список' : ''].filter(Boolean).join(' · ');
+    const go = n.case_id && n.case_id !== currentCase ? `data-gopen="${n.case_id}"` : '';
+    nodes += `<g class="gnode" ${go}><title>${esc(n.name)}${go ? ' — открыть случай №' + n.case_id : ''}</title>
+      <rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="10" fill="${look[0]}" stroke="${stroke}"
+        stroke-width="${n.role === 'current' ? 2.5 : 1}" ${n.role === 'group' ? 'stroke-dasharray="4 3"' : ''}/>
+      <text x="${p.x + 10}" y="${p.y + 20}" font-size="13" font-weight="700" fill="#1d1d1e">${esc(cut(n.name, 24))}</text>
+      <text x="${p.x + 10}" y="${p.y + 37}" font-size="12" fill="${n.status === 'blocked' ? 'var(--warn)' : n.status === 'limited' ? 'var(--amber)' : '#2f4a3f'}">${esc(state)}</text>
+      <text x="${p.x + 10}" y="${p.y + 53}" font-size="11" fill="var(--muted)">${esc(cut(meta, 30))}</text></g>`;
+  }
+  const marker = (id, color) => `<marker id="arr-${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8"
+    markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="${color}"/></marker>`;
+  host.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Граф переводов вокруг случая">
+    <defs>${Object.entries(LINE).map(([k, v]) => marker(k, v[0])).join('')}</defs>${edges}${labelSvg}${nodes}</svg>`;
+  host.querySelectorAll('[data-gopen]').forEach(n => n.addEventListener('click', () => open(+n.dataset.gopen)));
+}
 function alertBox(text) { $('detail').insertAdjacentHTML('afterbegin', `<div class="note">${esc(text)}</div>`); }
 
 async function open(id) {
@@ -234,6 +343,16 @@ async function open(id) {
         : `<p><b>Счёт приостановлен целиком.</b>${c.frozen ? ` Спорных денег на счёте: ${money(c.frozen)}.` : ''}</p>`}
       ${c.can_escalate ? '<button class="act reject" id="escalate" style="max-width:320px">Приостановить счёт полностью</button>' : ''}
     </div>` : ''}
+    ${c.graph && c.graph.edges.length ? `<div class="card"><h2>Граф: куда шли деньги</h2>
+      <p class="muted" style="margin:0 0 8px">Счета и переводы вокруг случая: цепочка по жалобе, пересылки этого клиента, другие случаи с той же картой. Нажмите на счёт, чтобы открыть его случай.</p>
+      <div class="graph" id="graph"></div>
+      <div class="legend">
+        <span><i></i>деньги ушли</span><span><i class="wait"></i>перевод на паузе</span><span><i class="stop"></i>перевод отменён</span>
+        <span><b style="background:var(--blue-bg);border-color:var(--blue)"></b>пострадавший</span>
+        <span><b style="background:#fff;border:2px solid var(--brand)"></b>этот случай</span>
+        <span><b style="background:var(--warn-bg);border-color:var(--warn)"></b>счёт приостановлен</span>
+        <span><b style="background:var(--amber-bg);border-color:var(--amber)"></b>заморожена спорная сумма</span>
+      </div></div>` : ''}
     <div class="card">
       <h2>Цепочка переводов</h2>
       <div class="chain">
@@ -295,6 +414,7 @@ async function open(id) {
       <button class="act" id="report" style="background:var(--line);max-width:320px">Выгрузить сведения (JSON)</button>
     </div>
 `;
+  if ($('graph')) drawGraph($('graph'), c.graph, c.case_id);
   $('detail').querySelectorAll('[data-open]').forEach(b => b.onclick = () => open(+b.dataset.open));
   $('detail').querySelectorAll('[data-suspend-card]').forEach(b => b.onclick = async () => {
     b.disabled = true;

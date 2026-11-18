@@ -1628,11 +1628,14 @@ def _analyst_case(case_id: int) -> dict:
     if not case:
         raise HTTPException(404, "Случай не найден")
     client = _client(case["client_id"])
+    linked = _linked_for(case)
+    rental = engine.rental_signal(conn, client["id"], _now()) if client["kind"] == "ip" else None
     return _analyst_row(case) | {
         "account_opened_at": client["account_opened_at"],
         "client_status": client["status"],
         "client_kind": client["kind"], "activity": client["activity"],
-        "rental": engine.rental_signal(conn, client["id"], _now()) if client["kind"] == "ip" else None,
+        "rental": rental,
+        "graph": _graph(case, linked, rental),
         "incoming": _transfer_view(case["incoming_transfer_id"]),
         "outgoing": _transfer_view(case["transfer_id"]),
         "reasons": json.loads(case["reasons"]),
@@ -1643,7 +1646,7 @@ def _analyst_case(case_id: int) -> dict:
         "submitted_at": case["submitted_at"],
         "history": _history(case_id),
         "chain": _chain(case),
-        "linked": _linked_for(case),
+        "linked": linked,
         "guardian": {"name": _guardian_name(case["guardian_id"]), "state": case["guardian_state"]}
                     if case["guardian_id"] else None,
         "certificate": _clearance_view(case_id),
@@ -1669,6 +1672,115 @@ def _analyst_self_report(case) -> dict | None:
         return None
     return {"kind": row["kind"], "kind_text": SELF_REPORT_KINDS[row["kind"]], "details": row["details"],
             "number": _self_report_number(row), "at": row["at"], "code": row["code"]}
+
+
+GRAPH_MAX_COLUMN = 8            # больше счетов в одном столбце графа сворачиваются в «ещё N счетов»
+
+
+def _graph(case, linked: dict | None, rental: dict | None) -> dict:
+    """Граф денег вокруг случая: счета и переводы между ними, чтобы сотрудник видел схему целиком.
+
+    Берутся: переводы самого случая, вся цепочка по той же жалобе, все пересылки чужих денег этим клиентом
+    за 90 дней, переводы на ту же «связанную» карту из других случаев и, у ИП с признаками аренды, транзит за неделю.
+    Возвраты не рисуются отдельной стрелкой: сумма возврата подписывается у исходного перевода.
+    """
+    cid, now = case["client_id"], _now()
+    tids = {case["incoming_transfer_id"], case["transfer_id"]}
+    if case["complaint_id"] is not None:
+        for k in conn.execute("SELECT incoming_transfer_id, transfer_id FROM cases WHERE complaint_id=?",
+                              (case["complaint_id"],)):
+            tids |= {k["incoming_transfer_id"], k["transfer_id"]}
+    for e in engine.forward_episodes(conn, cid, now):
+        tids |= {e["incoming_id"], e["outgoing_id"]}
+    if linked:
+        # Из других случаев с той же картой — только сам перевод на неё, без их предыстории: граф остаётся читаемым.
+        for k in conn.execute(f"""SELECT incoming_transfer_id, transfer_id FROM cases
+                                  WHERE id IN ({",".join("?" * len(linked["cases"]))})""", linked["cases"]):
+            tids.add(k["transfer_id"] or k["incoming_transfer_id"])
+    if rental:
+        since = (now - timedelta(days=engine.RENT_DAYS)).isoformat()
+        tids |= {r["id"] for r in conn.execute(
+            """SELECT t.id FROM transfers t JOIN clients a ON a.id=t.sender_id JOIN clients b ON b.id=t.receiver_id
+               WHERE (t.receiver_id=? AND a.kind='person' OR t.sender_id=? AND b.kind='person')
+                 AND t.created_at >= ? AND t.return_of IS NULL""", (cid, cid, since))}
+    tids.discard(None)
+    rows = conn.execute(f"""SELECT * FROM transfers WHERE id IN ({",".join("?" * len(tids))}) AND return_of IS NULL
+                            ORDER BY created_at""", list(tids)).fetchall() if tids else []
+
+    # Переводы между одной парой счетов складываются в одну стрелку; проведённые и остановленные — отдельно.
+    edges: dict[tuple, dict] = {}
+    for t in rows:
+        moved = t["status"] == "done"
+        e = edges.setdefault((t["sender_id"], t["receiver_id"], moved), {
+            "from": t["sender_id"], "to": t["receiver_id"], "amount": 0, "count": 0, "returned": 0,
+            "status": "done" if moved else t["status"], "last_at": t["created_at"]})
+        e["amount"] += t["amount"]
+        e["count"] += 1
+        e["returned"] += _returned_sum(t["id"]) if moved else 0
+        e["last_at"] = t["created_at"]
+        if not moved and t["status"] in ("held", "pending"):
+            e["status"] = t["status"]
+    ids = {cid} | {x for e in edges.values() for x in (e["from"], e["to"])}
+
+    # Столбцы: счёт стоит как можно правее, сразу перед теми, кому переводил (самый длинный путь до конца цепочки).
+    # Так стрелки не перескакивают через столбцы и не идут сквозь другие счета.
+    rest = {i: 0 for i in ids}
+    for _ in range(len(ids)):
+        changed = False
+        for e in edges.values():
+            if rest[e["from"]] < rest[e["to"]] + 1 <= len(ids):
+                rest[e["from"]] = rest[e["to"]] + 1
+                changed = True
+        if not changed:
+            break
+    last = max(rest.values())
+    col = {i: last - rest[i] for i in ids}
+
+    # Пострадавшие — те, кто пожаловался на один из этих переводов.
+    victims = {r["complainant_id"] for r in conn.execute(
+        f"""SELECT complainant_id FROM complaints WHERE transfer_id IN ({",".join("?" * len(rows))})""",
+        [t["id"] for t in rows])} if rows else set()
+    nodes = {}
+    for i in ids:
+        c = _client(i)
+        k = conn.execute("""SELECT id, kind, status, scope, frozen FROM cases WHERE client_id=?
+                            ORDER BY (status IN ('open','under_review','kept')) DESC, created_at DESC LIMIT 1""",
+                         (i,)).fetchone()
+        role = "current" if i == cid else "victim" if i in victims else "account"
+        nodes[i] = {"id": i, "name": c["name"], "status": c["status"], "kind": c["kind"], "role": role,
+                    "afc": engine.afc_status(conn, i), "age_days": (now - datetime.fromisoformat(c["account_opened_at"])).days,
+                    "case_id": k["id"] if k else None,
+                    "frozen": k["frozen"] if k and k["kind"] == "block" and k["status"] in UNRESOLVED else 0,
+                    "col": col[i], "weight": sum(e["amount"] for e in edges.values() if i in (e["from"], e["to"]))}
+
+    # Слишком много счетов в одном столбце (например, плательщики арендованного ИП) — лишние сворачиваются.
+    for c_ in sorted(set(col.values())):
+        members = sorted((n for n in nodes.values() if n["col"] == c_ and n["role"] == "account"),
+                         key=lambda n: -n["weight"])
+        others = sum(1 for n in nodes.values() if n["col"] == c_) - len(members)   # клиент случая, пострадавший
+        if others + len(members) <= GRAPH_MAX_COLUMN:
+            continue
+        extra = members[max(0, GRAPH_MAX_COLUMN - 1 - others):]   # одно место — под «ещё N счетов»
+        gid = f"more-{c_}"
+        n = len(extra)
+        word = "счёт" if n % 10 == 1 and n % 100 != 11 else "счёта" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "счетов"
+        nodes[gid] = {"id": gid, "name": f"ещё {n} {word}", "status": "active", "kind": "group",
+                      "role": "group", "afc": None, "age_days": None, "case_id": None, "frozen": 0, "col": c_,
+                      "weight": sum(n["weight"] for n in extra)}
+        hidden = {n["id"] for n in extra}
+        merged: dict[tuple, dict] = {}
+        for key, e in edges.items():
+            a = gid if e["from"] in hidden else e["from"]
+            b = gid if e["to"] in hidden else e["to"]
+            m = merged.setdefault((a, b, key[2]), {**e, "from": a, "to": b, "amount": 0, "count": 0, "returned": 0})
+            for f in ("amount", "count", "returned"):
+                m[f] += e[f]
+            m["last_at"] = max(m["last_at"], e["last_at"])
+        edges = merged
+        for h in hidden:
+            nodes.pop(h)
+    order = sorted(nodes.values(), key=lambda n: (n["col"], n["role"] != "victim", n["role"] == "group", -n["weight"]))
+    return {"nodes": [{k: v for k, v in n.items() if k != "weight"} for n in order], "edges": list(edges.values())}
 
 
 @app.get("/analyst/cases/{case_id}")
@@ -1854,6 +1966,9 @@ def antifraud_report(case_id: int, s: dict = Depends(as_analyst)):
                         "sender": o["sender"], "receiver": o["receiver"]} for o in ops],
         "reasons": [{"code": r.get("code"), "points": r.get("points"), "text": r.get("text")} for r in card["reasons"]],
         "complaint_chain": [{k: x.get(k) for k in ("hop", "name", "amount", "role", "status_text")} for x in card["chain"]],
+        "money_graph": {"accounts": [{k: n[k] for k in ("id", "name", "role", "status", "kind", "afc")} for n in card["graph"]["nodes"]],
+                        "transfers": [{k: e[k] for k in ("from", "to", "amount", "count", "status", "returned")}
+                                      for e in card["graph"]["edges"]]},
         "linked_account": ({k: card["linked"][k] for k in ("client_id", "name", "sources", "amount")}
                            if card["linked"] else None),
         "client_explanation": card["explanation"],

@@ -1475,3 +1475,55 @@ def test_rental_rules_on_synthetic_business_accounts():
     assert len(flags) == 10
     for cid, flagged in flags.items():
         assert flagged == STATS["ip_labels"][cid].startswith("rent_"), STATS["ip_labels"][cid]
+
+
+# ---------- Граф денег в карточке случая ----------
+
+def graph_of(an, case_id):
+    g = an.get(f"/analyst/cases/{case_id}").json()["graph"]
+    return {n["id"]: n for n in g["nodes"]}, {(e["from"], e["to"]): e for e in g["edges"]}
+
+
+def test_graph_shows_complaint_chain_and_shared_card():
+    block_seller()
+    an = analyst()
+    case_id = next(c["case_id"] for c in an.get("/analyst/cases").json() if c["client_id"] == SELLER)
+    nodes, edges = graph_of(an, case_id)
+    assert nodes[VICTIM]["role"] == "victim" and nodes[SELLER]["role"] == "current"
+    assert edges[(VICTIM, SELLER)]["amount"] == 200000 and edges[(SELLER, DROP_CARD)]["amount"] == 195000
+    assert (TRANSIT, DROP_CARD) in edges                  # Руслан переводил на ту же карту в другом случае
+    assert nodes[VICTIM]["col"] < nodes[SELLER]["col"] < nodes[DROP_CARD]["col"]
+    assert nodes[DROP_CARD]["status"] == "blocked" and nodes[DROP_CARD]["case_id"]
+    assert nodes[SELLER]["status"] == "limited" and nodes[SELLER]["frozen"] == 5000
+    # Все четыре пересылки Руслана складываются в одну стрелку.
+    ruslan = next(c["case_id"] for c in an.get("/analyst/cases").json() if c["client_id"] == TRANSIT)
+    _, edges = graph_of(an, ruslan)
+    assert edges[(TRANSIT, DROP_CARD)]["count"] == 4
+    report = an.post(f"/analyst/cases/{case_id}/report").json()
+    assert report["money_graph"]["transfers"] and report["money_graph"]["accounts"]
+
+
+def test_graph_marks_stopped_and_returned_transfers():
+    st, an = client(STUDENT), analyst()
+    held = send(st, DROP_CARD, 150000).json()
+    _, edges = graph_of(an, held["case_id"])
+    assert edges[(STUDENT, DROP_CARD)]["status"] == "held"
+    st.post(f"/cases/{held['case_id']}/return-to-sender")
+    _, edges = graph_of(an, held["case_id"])
+    assert edges[(STUDENT, DROP_CARD)]["status"] == "cancelled"
+    assert edges[(STRANGER, STUDENT)]["returned"] == 150000
+    assert (STUDENT, STRANGER) not in edges              # возврат — подпись у исходного перевода, а не отдельная стрелка
+
+
+def test_graph_collapses_crowded_column(monkeypatch):
+    an = analyst()
+    r = send(client(RENTED_IP), DROP_CARD, 150000).json()
+    nodes, edges = graph_of(an, r["case_id"])
+    assert sum(e["count"] for (a, b), e in edges.items() if b == RENTED_IP) == 8     # все восемь плательщиков
+    monkeypatch.setattr(main, "GRAPH_MAX_COLUMN", 4)
+    nodes, edges = graph_of(an, r["case_id"])
+    group = [n for n in nodes.values() if n["role"] == "group"]
+    assert len(group) == 1 and group[0]["name"] == "ещё 5 счетов"
+    assert max(sum(1 for n in nodes.values() if n["col"] == c) for c in {n["col"] for n in nodes.values()}) <= 4
+    # Деньги при сворачивании не теряются.
+    assert sum(e["amount"] for (a, b), e in edges.items() if b == RENTED_IP) == 1030000
