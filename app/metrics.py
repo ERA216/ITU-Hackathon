@@ -81,6 +81,7 @@ def compute(conn, now: datetime, days: int = 30) -> dict:
         **_compensation(conn, since),
         **_loans(conn, since),
         **_rental(conn, since, now),
+        **_interbank(conn, since),
         "clearances": conn.execute("SELECT COUNT(*) AS n FROM clearances WHERE issued_at >= ?", (since,)).fetchone()["n"],
         "blocks": len(blocks),
         "appeals": len(appeals),
@@ -163,7 +164,23 @@ def _rental(conn, since: str, now: datetime) -> dict:
         (since,)).fetchone()["n"]
     accounts = sum(1 for r in conn.execute("SELECT id FROM clients WHERE kind='ip'").fetchall()
                    if engine.rental_signal(conn, r["id"], now))
-    return {"rental_accounts": accounts, "rental_stops": count("intercept"), "rental_suspended": count("block")}
+    dictation = conn.execute(
+        f"""SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN k.status IN ({",".join("?" * len(KEPT))}) THEN t.amount END), 0) AS s
+            FROM cases k JOIN transfers t ON t.id=k.transfer_id
+            WHERE k.kind='intercept' AND k.created_at >= ? AND ({" OR ".join("k.reasons LIKE ?" for _ in engine.SESSION_SIGNALS)})""",
+        (*KEPT, since, *[f'%"{code}"%' for code, _, _ in engine.SESSION_SIGNALS])).fetchone()
+    return {"rental_accounts": accounts, "rental_stops": count("intercept"), "rental_suspended": count("block"),
+            "dictation_stops": dictation["n"], "dictation_saved": dictation["s"]}
+
+
+def _interbank(conn, since: str) -> dict:
+    """Запросы между банками через Антифрод-центр: сколько отправили и получили, сколько заморожено и возвращено."""
+    rows = conn.execute("SELECT * FROM interbank WHERE sent_at >= ?", (since,)).fetchall()
+    out = [r for r in rows if r["direction"] == "out"]
+    inc = [r for r in rows if r["direction"] == "in"]
+    return {"interbank_out": len(out), "interbank_out_waiting": sum(r["status"] == "sent" for r in out),
+            "interbank_frozen": sum(r["frozen"] for r in out), "interbank_returned": sum(r["returned"] for r in out),
+            "interbank_in": len(inc), "interbank_in_frozen": sum(r["frozen"] for r in inc)}
 
 
 def _cooling_and_messages(conn, since: str) -> dict:

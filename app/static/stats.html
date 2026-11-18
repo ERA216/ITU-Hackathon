@@ -141,10 +141,11 @@ function drawBars(host, data) {
     tile('Сохранено от мошенников', compact(m.saved_amount), 'остановленные переводы, которые не ушли получателю') +
     tile('Возвращено отправителям', compact(m.returned_amount), `${num(m.returned_count)} возвратов кнопкой «Вернуть отправителю»`) +
     tile('Клиентов уберегли от статуса дроппера', num(m.protected_clients), 'вернули чужие деньги, а не переслали их дальше') +
-    tile('Не пришлось возмещать', compact(m.compensation_avoided), `${num(m.compensation_count)} переводов на счета из базы Антифрод-центра не ушли`);
+    tile('Не пришлось возмещать', compact(m.compensation_avoided), `не ушло переводов на счета из базы Антифрод-центра: ${num(m.compensation_count)}`);
   $('prevent').innerHTML =
     tile('Отменено в период охлаждения', compact(m.cooling_saved), `${num(m.cooling_cancelled)} из ${num(m.cooling)} отложенных крупных первых переводов`) +
-    tile('Остановлено денег из свежего кредита', compact(m.loan_saved), `${num(m.loan_stops)} остановок, кредитов вернули банку: ${num(m.loans_repaid)}`) +
+    tile('Остановлено денег из свежего кредита', compact(m.loan_saved), `остановок: ${num(m.loan_stops)}, кредитов вернули банку: ${num(m.loans_repaid)}`) +
+    tile('Остановлено переводов под диктовку', compact(m.dictation_saved), `остановок: ${num(m.dictation_stops)}; признаки — звонок, вставленные реквизиты, ссылка из мессенджера, новое устройство`) +
     tile('Счетов ИП с признаками аренды', num(m.rental_accounts), `остановлено переводов: ${num(m.rental_stops)}, приостановлено счетов: ${num(m.rental_suspended)}`) +
     tile('Проверено сообщений', num(m.message_checks), `похожи на схемы мошенников: ${num(m.message_danger)}`);
   $('load').innerHTML =
@@ -160,6 +161,8 @@ function drawBars(host, data) {
     tile('Возвращено пострадавшим', compact(m.victim_refund_amount), `${num(m.victim_refunds)} возвратов замороженных денег по жалобам`) +
     tile('Соразмерных блокировок', num(m.partial_blocks), 'заморожена только спорная сумма, счётом клиент пользуется') +
     tile('Клиенты сообщили сами', num(m.self_reports), 'через «Меня втянули в схему», до жалоб и блокировок') +
+    tile('Запросы в другие банки', num(m.interbank_out), `ждут ответа: ${num(m.interbank_out_waiting)}; заморожено там ${compact(m.interbank_frozen)}, вернули пострадавшим ${compact(m.interbank_returned)}`) +
+    tile('Запросы от других банков', num(m.interbank_in), `ответили автоматически; у нас заморожено ${compact(m.interbank_in_frozen)}`) +
     tile('Апелляций рассмотрено', `${num(m.appeals_decided)} из ${num(m.appeals)}`, `сейчас просрочено: ${num(m.appeals_overdue)}`) +
     tile('Время ответа на апелляцию', hrs(m.appeal_hours_median), `медиана по ${num(m.appeals_decided)} апелляциям; в срок 3 дня: ${pct(m.appeals_in_time_share)}`) +
     tile('Ограничения сняты', pct(m.unblocked_share), `из ${num(m.appeals_decided)} рассмотренных: клиент оказался невольным участником`) +

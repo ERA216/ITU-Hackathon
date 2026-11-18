@@ -239,7 +239,7 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
     демо-серверу они не нужны, без них он запускается быстрее.
     """
     if reset:
-        for table in ("loans", "self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
+        for table in ("interbank", "loans", "self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
             conn.execute(f"DELETE FROM {table}")
     now = (now or clock.now()).replace(microsecond=0)
     rng = random.Random(seed)
@@ -322,12 +322,19 @@ def _demo_personas(conn, now: datetime):
         (1013, "Болат (взял кредит по звонку «из банка»)", now - timedelta(days=1500), 23000, "honest"),
         (1014, "ИП Нурлан (сдал ИП «в аренду»)", now - timedelta(days=800), 15000, "dropper"),
         (1015, "ИП Асель (магазин одежды)", now - timedelta(days=1100), 40000, "honest"),
+        # Счета в другом банке: под ними нельзя войти, но на них можно переводить и получать от них деньги.
+        (1016, "Карта в Банке «Б» (…4471)", now - timedelta(days=9), 0, "dropper"),
+        (1017, "Клиент Банка «Б»", now - timedelta(days=2000), 900000, "honest"),
+        (1018, "Сауле (купила билеты по объявлению)", now - timedelta(days=1500), 260000, "honest"),
+        (1019, "Арман (продаёт билеты на концерты)", now - timedelta(days=900), 21000, "honest"),
+        (1020, "Дина (получила перевод из другого банка)", now - timedelta(days=600), 17000, "honest"),
     ]
     conn.executemany(
         "INSERT INTO clients(id,name,account_opened_at,balance,true_kind) VALUES(?,?,?,?,?)",
         [(i, n, o.isoformat(), b, k) for i, n, o, b, k in rows])
     conn.executemany("UPDATE clients SET kind='ip', activity=? WHERE id=?", [
         ("Оптовая торговля продуктами", 1011), ("Розничная торговля одеждой", 1014), ("Магазин одежды", 1015)])
+    conn.execute("UPDATE clients SET kind='external', bank='Банк «Б»' WHERE id IN (1016, 1017)")
     tr = [
         (1004, 1001, 15000, now - timedelta(days=200), "demo"),
         (1004, 1001, 20000, now - timedelta(days=9), "demo"),
@@ -430,6 +437,23 @@ def _demo_personas(conn, now: datetime):
         if d % 10 == 0:
             tr_at(1015, 1011, int(income * 0.55) // 1000 * 1000, now - timedelta(days=d, hours=-6))
             income = 0
+
+    # Деньги уходят в другой банк. Сауле купила билеты у Армана, а мошенник попросил Армана «вернуть ошибочный
+    # перевод» на карту в Банке «Б». Когда Сауле пожалуется, цепочка дойдёт до другого банка: туда уйдёт запрос.
+    for n, (pair, amount) in enumerate([((1019, 81), 12000), ((83, 1019), 35000), ((1019, 81), 9000),
+                                        ((86, 1019), 28000), ((1019, 89), 15000)]):
+        tr_at(*pair, amount, now - timedelta(days=140 - 25 * n))
+    t_buy = now - timedelta(days=1, hours=6)
+    tr_at(1018, 1019, 90000, t_buy, "demo_in")
+    tr_at(1019, 1016, 88000, t_buy + timedelta(minutes=25), "demo_out")
+    # Деньги приходят из другого банка. Клиент Банка «Б» перевёл Дине 140 000 ₸, Дина «вернула ошибочный перевод»
+    # на «карту для возврата». Банк «Б» пришлёт запрос через Антифрод-центр (в демо его имитирует сотрудник).
+    for n, (pair, amount) in enumerate([((1020, 91), 8000), ((94, 1020), 22000), ((1020, 91), 6500),
+                                        ((97, 1020), 30000), ((1020, 94), 5000)]):
+        tr_at(*pair, amount, now - timedelta(days=120 - 22 * n))
+    t_got = now - timedelta(hours=20)
+    tr_at(1017, 1020, 140000, t_got, "demo_in")
+    tr_at(1020, 1003, 135000, t_got + timedelta(minutes=40), "demo_out")
 
     # Имитация базы Антифрод-центра: «чёрный» список — подтверждённые мошенники, «серый» — подозрительные.
     conn.executemany("INSERT INTO afc_list(client_id,list,added_at,note) VALUES(?,?,?,?)", [

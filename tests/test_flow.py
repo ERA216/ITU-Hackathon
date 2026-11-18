@@ -194,7 +194,7 @@ def test_analyst_code_is_checked_and_rate_limited():
 def test_empty_database_is_filled_on_first_request(tmp_path):
     main.conn.close()
     main.conn = db.connect(str(tmp_path / "empty.db"))
-    assert len(TestClient(main.app).get("/demo/clients").json()) == 15
+    assert len(TestClient(main.app).get("/demo/clients").json()) == 20
 
 
 def test_stale_demo_data_is_recreated():
@@ -408,7 +408,7 @@ def test_old_database_is_rebuilt(tmp_path):
     old.close()
     main.conn.close()
     main.conn = db.connect(str(path))
-    assert len(TestClient(main.app).get("/demo/clients").json()) == 15
+    assert len(TestClient(main.app).get("/demo/clients").json()) == 20
 
 
 def test_quality_page_is_served_with_current_threshold():
@@ -1527,3 +1527,111 @@ def test_graph_collapses_crowded_column(monkeypatch):
     assert max(sum(1 for n in nodes.values() if n["col"] == c) for c in {n["col"] for n in nodes.values()}) <= 4
     # Деньги при сворачивании не теряются.
     assert sum(e["amount"] for (a, b), e in edges.items() if b == RENTED_IP) == 1030000
+
+
+# ---------- «Перевод под диктовку» ----------
+
+def send_s(c, to, amount, **session):
+    return c.post("/transfers", json={"receiver_id": to, "amount": amount, "session": session})
+
+
+def test_dictated_transfer_to_new_account_is_held():
+    mom = client(MOM)
+    assert send(mom, SAFE_ACCOUNT, 50000).json()["status"] == "done"          # без признаков — проходит
+    r = send_s(mom, STUDENT, 50000, on_call=True, pasted=True, from_link=True).json()
+    assert r["status"] == "done" and not r["reasons"]      # давно знакомому получателю признаки сессии не мешают
+    r = send_s(mom, CARD_GIVER, 50000, on_call=True, pasted=True, from_link=True).json()
+    assert r["status"] == "held" and r["kind"] == "dictation"
+    assert {"on_call", "pasted", "from_link"} <= {x["code"] for x in r["reasons"]}
+    assert account(client(STUDENT), STUDENT)["guardian_requests"][0]["kind"] == "dictation"
+    mom.post(f"/cases/{r['case_id']}/withdraw")
+    m = analyst().get("/analyst/metrics").json()
+    assert m["dictation_stops"] == 1 and m["dictation_saved"] == 50000
+
+
+def test_one_session_signal_alone_does_not_stop():
+    r = send_s(client(MOM), VICTIM, 30000, on_call=True).json()               # разговор во время перевода — не повод
+    assert r["status"] == "done" and "on_call" in {x["code"] for x in r["reasons"]}
+
+
+def test_session_signals_kazakh_and_unknown_fields():
+    mom = client(MOM)
+    mom.cookies.set("ca_lang", "kk")
+    r = send_s(mom, CARD_GIVER, 50000, on_call=True, pasted=True, new_device=True).json()
+    assert any(x["text"].startswith("Аударым кезінде") for x in r["reasons"])
+    assert mom.post("/transfers", json={"receiver_id": VICTIM, "amount": 1000, "session": {"on_call": "да"}}).status_code == 422
+
+
+# ---------- Жалоба через другой банк ----------
+
+BANK_CARD, BANK_CLIENT, SAULE, ARMAN, DINA = 1016, 1017, 1018, 1019, 1020
+
+
+def saule_complains():
+    saule = client(SAULE)
+    tid = next(t["id"] for t in account(saule, SAULE)["feed"] if t["receiver_id"] == ARMAN and t["amount"] == 90000)
+    return saule, saule.post(f"/transfers/{tid}/complaint").json()
+
+
+def test_accounts_in_other_bank_cannot_log_in():
+    people = {p["id"]: p for p in TestClient(main.app).get("/demo/clients").json()}
+    assert people[BANK_CARD]["external"] and not people[SAULE]["external"]
+    assert TestClient(main.app).post("/login", json={"role": "client", "client_id": BANK_CARD}).status_code == 403
+
+
+def test_complaint_follows_money_into_other_bank():
+    saule, r = saule_complains()
+    assert r["outcome"] == "blocked" and "другой банк" in r["text"]
+    an = analyst()
+    req = an.get("/analyst/interbank").json()["requests"][0]
+    assert (req["direction"], req["status"], req["amount"], req["bank"]) == ("out", "sent", 88000, "Банк «Б»")
+    assert req["victim"].startswith("Сауле") and req["ours"].startswith("Арман") and req["cases"]
+    card = account(saule, SAULE)["complaints"][0]
+    assert card["stage"] == "checking" and card["frozen"] == 2000 and "ответ ожидаем до" in card["banks"][0]
+    # Граф показывает счёт в другом банке и что с запросом.
+    nodes, _ = graph_of(an, req["cases"][0])
+    assert nodes[BANK_CARD]["kind"] == "external" and nodes[BANK_CARD]["request"]["status"] == "sent"
+    # Банк «Б» заморозил деньги и вернул их пострадавшей.
+    assert an.post(f"/analyst/interbank/{req['id']}/answer", json={"result": "frozen"}).json()["status"] == "frozen"
+    assert an.post(f"/analyst/interbank/{req['id']}/answer", json={"result": "gone"}).status_code == 409
+    card = account(saule, SAULE)["complaints"][0]
+    assert card["frozen"] == 90000 and "заморозил 88 000" in card["banks"][0]
+    before = account(saule, SAULE)["balance"]
+    assert an.post(f"/analyst/interbank/{req['id']}/return").json()["returned"] == 88000
+    assert an.post(f"/analyst/interbank/{req['id']}/return").status_code == 409
+    acc = account(saule, SAULE)
+    assert acc["balance"] == before + 88000 and any(t.get("refund") for t in acc["feed"])
+    assert acc["complaints"][0]["returned"] == 88000
+    m = an.get("/analyst/metrics").json()
+    assert (m["interbank_out"], m["interbank_frozen"], m["interbank_returned"]) == (1, 88000, 88000)
+
+
+def test_other_bank_answers_money_is_gone():
+    saule, _ = saule_complains()
+    an = analyst()
+    rid = an.get("/analyst/interbank").json()["requests"][0]["id"]
+    an.post(f"/analyst/interbank/{rid}/answer", json={"result": "gone"})
+    assert "уже сняты" in account(saule, SAULE)["complaints"][0]["banks"][0]
+    assert an.post(f"/analyst/interbank/{rid}/return").status_code == 409
+    assert an.post(f"/analyst/interbank/{rid}/answer", json={"result": "maybe"}).status_code == 409
+
+
+def test_request_from_other_bank_is_traced_and_answered_automatically():
+    an = analyst()
+    demo = an.get("/analyst/interbank").json()["incoming_demo"]
+    tr = next(t for t in demo if t["receiver_id"] == DINA)
+    assert tr["amount"] == 140000
+    r = an.post("/analyst/interbank/incoming", json={"transfer_id": tr["id"]}).json()
+    assert (r["direction"], r["status"], r["frozen"]) == ("in", "answered", 140000)
+    assert "заморожено 140 000" in r["note"] and len(r["cases"]) == 2
+    assert an.post("/analyst/interbank/incoming", json={"transfer_id": tr["id"]}).status_code == 409
+    dina = account(client(DINA), DINA)
+    assert dina["status"] == "limited" and dina["frozen"] == 5000           # невольный участник: заморожен остаток
+    card = an.get(f"/analyst/cases/{r['cases'][0]}").json()
+    assert any(h["who"] == "Банк «Б»" for h in card["history"])
+    # Обычный перевод нашего клиента — не запрос другого банка.
+    own = next(t["id"] for t in account(client(STUDENT), STUDENT)["feed"] if t["direction"] == "in")
+    assert an.post("/analyst/interbank/incoming", json={"transfer_id": own}).status_code == 400
+    assert client(STUDENT).post("/analyst/interbank/incoming", json={"transfer_id": tr["id"]}).status_code == 401
+    m = an.get("/analyst/metrics").json()
+    assert (m["interbank_in"], m["interbank_in_frozen"]) == (1, 140000)

@@ -115,7 +115,7 @@
       <button data-tab="pending" aria-selected="true">Ждут решения</button><button data-tab="all">Все</button><button data-tab="linked">Связанные счета</button>
     </div>
     <div class="tabs" role="tablist">
-      <button data-tab="business">Аренда ИП</button>
+      <button data-tab="business">Аренда ИП</button><button data-tab="interbank">Другие банки</button>
     </div>
     <h2 id="queueTitle">Очередь</h2><div id="queue"></div>
   </div>
@@ -155,6 +155,7 @@ document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => {
 async function loadQueue() {
   if (tab === 'linked') return loadLinked();
   if (tab === 'business') return loadBusiness();
+  if (tab === 'interbank') return loadInterbank();
   const all = await api('/analyst/cases');
   const waiting = all.filter(c => c.needs_decision);
   const q = tab === 'pending' ? waiting : all;
@@ -207,6 +208,38 @@ async function loadBusiness() {
     try { const c = await api(`/analyst/business/${b.dataset.rent}/suspend`, {}); await loadBusiness(); open(c.case_id); }
     catch (e) { b.disabled = false; alertBox(e.message); }
   });
+}
+// Запросы между банками через Антифрод-центр. Ответы другого банка в демо имитирует сотрудник.
+async function loadInterbank() {
+  const d = await api('/analyst/interbank');
+  $('queueTitle').textContent = `Другие банки: ${d.requests.length}`;
+  const cases = r => r.cases.length ? `<div class="muted" style="margin-top:4px">Случаи: ${r.cases.map(id => `<button class="linkbtn" data-open="${id}">№${id}</button>`).join(', ')}</div>` : '';
+  $('queue').innerHTML = '<p class="muted" style="margin:0 0 8px">Если деньги пострадавшего ушли в другой банк, туда через Антифрод-центр уходит запрос на заморозку. Если запрос приходит к нам, система сама идёт по цепочке в нашем банке и сразу отвечает. В демо другой банк — имитация.</p>' +
+    d.requests.map(r => `<div class="item" style="cursor:default">
+      <b>${r.direction === 'out' ? 'Наш запрос' : 'Запрос к нам'} · ${esc(r.bank)}: ${money(r.amount)}</b>
+      <span class="muted">${r.direction === 'out' ? `пострадавший: ${esc(r.victim)} · деньги переслал: ${esc(r.ours)}` : `их клиент перевёл нашему: ${esc(r.ours)}`}</span><br>
+      <span class="pill ${r.status === 'sent' ? 'wait' : r.status === 'gone' ? 'organizer' : 'unwitting'}">${esc(r.status_text)}</span>
+      ${r.overdue ? '<span class="pill late">Срок ответа прошёл</span>' : ''}
+      <div class="muted" style="margin-top:4px">${r.status === 'sent' ? `Отправлен ${when(r.sent_at)}, ответ до ${when(r.due_at)}` : esc(r.note || '')}${r.returned ? ` · вернули пострадавшему ${money(r.returned)}` : ''}</div>
+      ${r.status === 'sent' ? `<div class="muted" style="margin-top:6px">Демо: ответ другого банка</div><div class="actions" style="margin-top:4px"><button class="act approve" style="padding:7px 10px" data-ans="${r.id}" data-res="frozen">Заморожено</button>
+        <button class="act reject" style="padding:7px 10px" data-ans="${r.id}" data-res="gone">Деньги уже ушли</button></div>` : ''}
+      ${r.can_return ? `<button class="act approve" style="margin-top:6px;padding:7px 10px" data-ret="${r.id}">Имитировать возврат пострадавшему</button>` : ''}
+      ${cases(r)}
+    </div>`).join('') + (d.requests.length ? '' : '<div class="card muted">Запросов пока нет.</div>') +
+    (d.incoming_demo.length ? '<h2 style="margin:14px 0 8px">Демо: переводы из других банков</h2>' + d.incoming_demo.map(t => `<div class="item" style="cursor:default">
+      <b>${esc(t.sender)} → ${esc(t.receiver)}</b>
+      <span class="muted">${money(t.amount)} · ${when(t.created_at)}</span><br>
+      <button class="act reject" style="margin-top:6px;padding:7px 10px" data-incoming="${t.id}">Имитировать запрос другого банка</button>
+    </div>`).join('') : '');
+  $('queue').querySelectorAll('[data-open]').forEach(b => b.onclick = () => open(+b.dataset.open));
+  const act = (sel, call) => $('queue').querySelectorAll(sel).forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { const r = await call(b); await loadInterbank(); if (r && r.cases && r.cases.length) open(r.cases[0]); }
+    catch (e) { b.disabled = false; alertBox(e.message); }
+  });
+  act('[data-ans]', b => api(`/analyst/interbank/${b.dataset.ans}/answer`, {result: b.dataset.res}));
+  act('[data-ret]', b => api(`/analyst/interbank/${b.dataset.ret}/return`, {}));
+  act('[data-incoming]', b => api('/analyst/interbank/incoming', {transfer_id: +b.dataset.incoming}));
 }
 // Граф денег: столбцы слева направо (откуда пришли деньги → куда ушли), стрелка — переводы между двумя счетами.
 function drawGraph(host, g, currentCase) {
@@ -283,18 +316,21 @@ function drawGraph(host, g, currentCase) {
   let nodes = '';
   for (const n of g.nodes) {
     const p = pos[n.id];
-    const look = n.role === 'victim' ? ['var(--blue-bg)', 'var(--blue)'] : n.status === 'blocked' ? ['var(--warn-bg)', 'var(--warn)']
+    const ext = n.kind === 'external';
+    const look = n.role === 'victim' ? ['var(--blue-bg)', 'var(--blue)'] : ext ? ['#fff', 'var(--muted)']
+      : n.status === 'blocked' ? ['var(--warn-bg)', 'var(--warn)']
       : n.status === 'limited' ? ['var(--amber-bg)', 'var(--amber)'] : n.role === 'group' ? ['#fff', 'var(--line)'] : ['var(--fill)', 'var(--fill)'];
     const stroke = n.role === 'current' ? 'var(--brand)' : look[1];
+    const REQ = {sent: 'Запрос отправлен', frozen: `Заморожено ${n.request ? money(n.request.frozen) : ''}`, gone: 'Деньги ушли дальше'};
     const state = n.role === 'group' ? 'свёрнуты, чтобы граф читался'
-      : n.status === 'blocked' ? 'Счёт приостановлен' : n.status === 'limited' ? `Заморожено ${money(n.frozen)}`
-      : n.role === 'victim' ? 'Пострадавший' : 'Счёт активен';
-    const meta = n.role === 'group' ? '' : [n.role === 'current' ? 'этот случай' : '', `счёту ${n.age_days} дн.`, n.kind === 'ip' ? 'ИП' : '',
+      : n.role === 'victim' ? 'Пострадавший' : ext ? (n.request ? REQ[n.request.status] : 'Счёт в другом банке')
+      : n.status === 'blocked' ? 'Счёт приостановлен' : n.status === 'limited' ? `Заморожено ${money(n.frozen)}` : 'Счёт активен';
+    const meta = n.role === 'group' ? '' : ext ? `другой банк: ${n.bank || ''}` : [n.role === 'current' ? 'этот случай' : '', `счёту ${n.age_days} дн.`, n.kind === 'ip' ? 'ИП' : '',
       n.afc === 'grey' ? 'серый список' : n.afc === 'black' ? 'чёрный список' : ''].filter(Boolean).join(' · ');
     const go = n.case_id && n.case_id !== currentCase ? `data-gopen="${n.case_id}"` : '';
     nodes += `<g class="gnode" ${go}><title>${esc(n.name)}${go ? ' — открыть случай №' + n.case_id : ''}</title>
       <rect x="${p.x}" y="${p.y}" width="${NW}" height="${NH}" rx="10" fill="${look[0]}" stroke="${stroke}"
-        stroke-width="${n.role === 'current' ? 2.5 : 1}" ${n.role === 'group' ? 'stroke-dasharray="4 3"' : ''}/>
+        stroke-width="${n.role === 'current' ? 2.5 : 1}" ${n.role === 'group' || ext ? 'stroke-dasharray="4 3"' : ''}/>
       <text x="${p.x + 10}" y="${p.y + 20}" font-size="13" font-weight="700" fill="#1d1d1e">${esc(cut(n.name, 24))}</text>
       <text x="${p.x + 10}" y="${p.y + 37}" font-size="12" fill="${n.status === 'blocked' ? 'var(--warn)' : n.status === 'limited' ? 'var(--amber)' : '#2f4a3f'}">${esc(state)}</text>
       <text x="${p.x + 10}" y="${p.y + 53}" font-size="11" fill="var(--muted)">${esc(cut(meta, 30))}</text></g>`;
@@ -352,6 +388,7 @@ async function open(id) {
         <span><b style="background:#fff;border:2px solid var(--brand)"></b>этот случай</span>
         <span><b style="background:var(--warn-bg);border-color:var(--warn)"></b>счёт приостановлен</span>
         <span><b style="background:var(--amber-bg);border-color:var(--amber)"></b>заморожена спорная сумма</span>
+        <span><b style="background:#fff;border:1px dashed var(--muted)"></b>счёт в другом банке</span>
       </div></div>` : ''}
     <div class="card">
       <h2>Цепочка переводов</h2>
@@ -382,9 +419,9 @@ async function open(id) {
     ${c.chain && c.chain.length ? `<div class="card"><h2>Цепочка по жалобе</h2>
       <p class="muted">Все счета, приостановленные по одной жалобе. Нажмите на звено, чтобы открыть его случай.</p>
       <ol class="hops">${c.chain.map(x => `<li class="${x.current ? 'cur' : ''}">
-        <span class="hopn">${x.hop === 0 ? 'Пострадавший' : 'Звено ' + x.hop}</span>
+        <span class="hopn">${x.hop === 0 ? 'Пострадавший' : x.role === 'external' ? 'Другой банк' : 'Звено ' + x.hop}</span>
         ${x.case_id && !x.current ? `<button class="linkbtn" data-open="${x.case_id}">${esc(x.name)}</button>` : `<b>${esc(x.name)}</b>`}
-        <span class="muted">${x.role === 'victim' ? 'перевёл ' : x.role === 'holder' ? 'деньги остались на счёте: ' : 'получил и переслал '}${money(x.amount)} · ${esc(x.status_text)}${x.frozen ? ' · заморожено ' + money(x.frozen) : ''}${x.scope === 'partial' ? ' · соразмерная блокировка' : ''}</span>
+        <span class="muted">${x.role === 'victim' ? 'перевёл ' : x.role === 'holder' ? 'деньги остались на счёте: ' : x.role === 'external' ? 'ушло в другой банк: ' : 'получил и переслал '}${money(x.amount)} · ${esc(x.status_text)}${x.frozen ? ' · заморожено ' + money(x.frozen) : ''}${x.scope === 'partial' ? ' · соразмерная блокировка' : ''}</span>
       </li>`).join('')}</ol>
       ${c.complaint ? `<p style="margin:12px 0 0"><b>Пострадавшему возвращено ${money(c.complaint.returned)} из ${money(c.complaint.amount)}.</b>
         ${c.complaint.frozen ? ` Заморожено в цепочке: ${money(c.complaint.frozen)}.` : ''}</p>` : ''}

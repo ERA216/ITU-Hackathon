@@ -12,8 +12,9 @@ CREATE TABLE IF NOT EXISTS clients (
     balance INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active',      -- active | limited (заморожена спорная сумма) | blocked
     true_kind TEXT NOT NULL DEFAULT 'honest',   -- honest | dropper (метка синтетики, банку неизвестна)
-    kind TEXT NOT NULL DEFAULT 'person',        -- person: частное лицо | ip: индивидуальный предприниматель
-    activity TEXT                               -- вид деятельности ИП
+    kind TEXT NOT NULL DEFAULT 'person',        -- person: частное лицо | ip: ИП | external: счёт в другом банке
+    activity TEXT,                              -- вид деятельности ИП
+    bank TEXT                                   -- для счёта в другом банке: какой банк
 );
 CREATE TABLE IF NOT EXISTS transfers (
     id INTEGER PRIMARY KEY,
@@ -126,6 +127,21 @@ CREATE TABLE IF NOT EXISTS loans (
     issued_at TEXT NOT NULL,
     repaid_at TEXT                      -- клиент вернул кредит банку (досрочное погашение)
 );
+CREATE TABLE IF NOT EXISTS interbank (
+    id INTEGER PRIMARY KEY,             -- запрос между банками через Антифрод-центр (в демо — имитация)
+    direction TEXT NOT NULL,            -- out: деньги ушли в другой банк, просим заморозить | in: другой банк просит нас
+    bank TEXT NOT NULL,
+    complaint_id INTEGER REFERENCES complaints(id),
+    transfer_id INTEGER NOT NULL REFERENCES transfers(id),  -- out: перевод на счёт в другом банке | in: перевод оттуда
+    amount INTEGER NOT NULL,
+    status TEXT NOT NULL,               -- out: sent | frozen | gone | in: answered
+    frozen INTEGER NOT NULL DEFAULT 0,  -- out: сколько заморозил другой банк | in: сколько заморозили мы
+    returned INTEGER NOT NULL DEFAULT 0,-- out: сколько другой банк вернул пострадавшему
+    sent_at TEXT NOT NULL,
+    due_at TEXT NOT NULL,               -- до какого момента ждём (или обещали) ответ
+    answered_at TEXT,
+    note TEXT
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -143,7 +159,7 @@ CREATE TABLE IF NOT EXISTS documents (
 """
 
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 
 def connect(path: str | None = None) -> sqlite3.Connection:

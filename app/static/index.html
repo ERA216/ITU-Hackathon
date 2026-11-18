@@ -126,6 +126,7 @@
   .demo-body #who { background:#00ab75; color:#fff; border:1px solid #00ab75; font-weight:500; }
   .demo-body #who option { background:#fff; color:#1d1d1e; }
   .demo-sec { border-top:1px solid var(--line); margin-top:16px; padding-top:14px; }
+  .demo-sec .opt { font-size:14px; padding:8px 10px; margin:6px 0 0; }
   .demo-links { display:flex; flex-wrap:wrap; gap:6px 16px; border-top:1px solid var(--line); margin-top:16px; padding-top:14px; }
   .demo-links a { color:var(--brand-ink); font-size:14px; font-weight:500; text-decoration:none; }
   .device { position:relative; width:400px; flex:none; height:min(860px, calc(100vh - 106px)); background:var(--bg);
@@ -209,6 +210,13 @@
       <div class="demo-sec">
         <div class="muted" data-t="demoH"></div>
         <button class="soft" id="callToggle"></button>
+      </div>
+      <div class="demo-sec">
+        <div class="muted" data-t="demoSessH"></div>
+        <label class="opt"><input type="checkbox" data-sess="on_call"><span data-t="sessCall"></span></label>
+        <label class="opt"><input type="checkbox" data-sess="pasted"><span data-t="sessPaste"></span></label>
+        <label class="opt"><input type="checkbox" data-sess="from_link"><span data-t="sessLink"></span></label>
+        <label class="opt"><input type="checkbox" data-sess="new_device"><span data-t="sessDevice"></span></label>
       </div>
       <div class="demo-sec">
         <div class="muted" data-t="demoMsgH"></div>
@@ -368,6 +376,12 @@ const T = {
               'Жарты жыл бұрын киім сатқан, сосын ЖК «ұйықтап» қалды. Үш күн бұрын пайызға шотқа кіруді беріп қойды: жеті бейтаныс адамның ақшасы бірден жеке тұлғалардың картасына кетті. «Қайтаруға арналған картаға» 150 000 ₸ аударыңыз — аударым тоқтайды. Қызметкер шотты «ЖК-ны жалға беру» бөлімінде көреді.'],
   hint_1015: ['Честный магазин: за неделю заплатили 14 новых покупателей, деньги уходят поставщику. Это не «аренда ИП»: предупреждений нет. Заплатите поставщику (Оптовый склад) — перевод пройдёт.',
               'Адал дүкен: бір аптада 14 жаңа сатып алушы төледі, ақша жеткізушіге кетеді. Бұл «ЖК-ны жалға беру» емес: ескерту жоқ. Жеткізушіге (Көтерме қойма) төлеңіз — аударым өтеді.'],
+  hint_1018: ['Купила билеты у Армана, а он переслал деньги «по ошибке» на карту в другом банке. В операциях нажмите «Это были мошенники?» у перевода 90 000 ₸: банк заморозит то, что осталось у Армана, и отправит запрос в Банк «Б» через Антифрод-центр.',
+              'Армантан билет сатып алды, ал ол ақшаны «қателесіп» басқа банктегі картаға жіберді. Операцияларда 90 000 ₸ аударымының астындағы «Бұл алаяқтар ма еді?» түймесін басыңыз: банк Арманда қалғанын бұғаттап, Антифрод-орталық арқылы «Б» Банкіне сұраныс жібереді.'],
+  hint_1019: ['Переслал 88 000 ₸ «по ошибке» на карту в другом банке. Сначала войдите как Сауле и пожалуйтесь; ответ Банка «Б» сотрудник имитирует во вкладке «Другие банки».',
+              '88 000 ₸ «қателесіп» басқа банктегі картаға жіберді. Алдымен Сәуле ретінде кіріп шағым беріңіз; «Б» Банкінің жауабын қызметкер «Басқа банктер» бөлімінде имитациялайды.'],
+  hint_1020: ['Получила 140 000 ₸ из другого банка и переслала их на «Карту для возврата». Во вкладке «Другие банки» сотрудник имитирует запрос Банка «Б»: система сама пройдёт цепочку в нашем банке и ответит.',
+              'Басқа банктен 140 000 ₸ алып, оны «қайтаруға арналған картаға» жіберді. «Басқа банктер» бөлімінде қызметкер «Б» Банкінің сұранысын имитациялайды: жүйе біздің банктегі тізбекті өзі тексеріп, жауап береді.'],
   who: ['Войти как', 'Кім ретінде кіру'],
   analystLink: ['Панель аналитика банка', 'Банк талдаушысының панелі'],
   available: ['Доступно', 'Қолжетімді'],
@@ -397,6 +411,16 @@ const T = {
              '{n} нөмірін байланыс операторы күдікті деп белгіледі. Банк ешқашан ақшаны «қауіпсіз шотқа» аударуды, кодтарды айтуды немесе қосымша орнатуды сұрамайды. Телефонды қойып, банкке өзіңіз қоңырау шалыңыз.'],
   demoH: ['Демо: сигнал оператора связи («Телеком Антифрод»). В банке он приходит от оператора автоматически.',
           'Демо: байланыс операторының сигналы («Телеком Антифрод»). Банкте ол оператордан автоматты түрде келеді.'],
+  demoSessH: ['Демо: что приложение замечает во время перевода. Включите два признака и переведите деньги на «Безопасный счёт» (новый счёт), для давнего счёта нужно три. В банке отметки ставит само приложение, без содержимого буфера и ссылок.',
+              'Демо: аударым кезінде қосымша не байқайды. Екі белгіні қосып, «Қауіпсіз шотқа» (жаңа шот) ақша аударыңыз, ескі шот үшін үшеуі керек. Банкте белгілерді қосымшаның өзі қояды, буфер мен сілтемелердің мазмұнынсыз.'],
+  sessCall: ['Идёт телефонный разговор', 'Телефонмен сөйлесу жүріп жатыр'],
+  sessPaste: ['Реквизиты вставлены из буфера обмена', 'Деректемелер алмасу буферінен қойылды'],
+  sessLink: ['Приложение открыто по ссылке из мессенджера', 'Қосымша мессенджердегі сілтеме арқылы ашылды'],
+  sessDevice: ['Вход с нового устройства сегодня', 'Бүгін жаңа құрылғыдан кіру'],
+  stopTextDictation: ['Похоже, вам диктуют перевод: пока вы переводите деньги новому получателю, идёт разговор, реквизиты вставлены из сообщения или приложение открыто по чужой ссылке. Так мошенники ведут человека по шагам. Положите трубку и проверьте, кому вы переводите.',
+                      'Сізге аударымды айтып тұрған сияқты: жаңа алушыға ақша аударып жатқанда сөйлесу жүріп жатыр, деректемелер хабарламадан қойылған немесе қосымша бөтен сілтеме арқылы ашылған. Алаяқтар адамды осылай қадам-қадаммен жетелейді. Телефонды қойып, кімге аударып жатқаныңызды тексеріңіз.'],
+  guardKindDictation: ['Похоже, перевод диктуют: во время перевода шёл разговор, реквизиты вставлены из сообщения. Деньги уходят на новый счёт.',
+                       'Аударымды айтып тұрған сияқты: аударым кезінде сөйлесу жүрді, деректемелер хабарламадан қойылды. Ақша жаңа шотқа кетіп жатыр.'],
   demoCallOn: ['Имитировать звонок с подозрительного номера', 'Күдікті нөмірден қоңырауды имитациялау'],
   demoCallOff: ['Завершить звонок', 'Қоңырауды аяқтау'],
   later: ['Решу позже: перевод останется на паузе', 'Кейін шешемін: аударым кідіртілген күйде қалады'],
@@ -657,7 +681,8 @@ async function loginAs(id) {
 
 async function loadPeople() {
   people = await api('/demo/clients');
-  $('who').innerHTML = people.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  // Под счетами в другом банке войти нельзя: они есть только среди получателей.
+  $('who').innerHTML = people.filter(p => !p.external).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
   if (me) $('who').value = me;
   renderMe();
 }
@@ -842,6 +867,7 @@ function renderComplaints(items) {
       <h2>${tr('compH')}</h2>
       <p>${esc(tr('compLine', {m: money(p.amount), r: p.receiver}))}</p>
       <p><b>${esc(p.text)}</b></p>
+      ${(p.banks || []).map(b => `<p>${esc(b)}</p>`).join('')}
     </div>`).join('');
 }
 
@@ -903,7 +929,7 @@ function renderGuardRequests(items) {
     <div class="alert guard">
       <h2>${esc(tr('guardH', {w: g.ward}))}</h2>
       <p>${esc(tr('guardText', {m: money(g.amount), r: g.receiver}))}</p>
-      <p><b>${tr({call: 'guardKindCall', grey: 'guardKindGrey', loan: 'guardKindLoan'}[g.kind] || 'guardKindScheme')}</b></p>
+      <p><b>${tr({call: 'guardKindCall', grey: 'guardKindGrey', loan: 'guardKindLoan', dictation: 'guardKindDictation'}[g.kind] || 'guardKindScheme')}</b></p>
       <p>${esc(g.state === 'asked' ? tr('guardAsked', {w: g.ward}) : g.status === 'open' ? tr('guardNotified') : tr('tagReview'))}</p>
       <div class="actions">
         <button class="primary" data-gcancel="${g.case_id}">${tr('guardCancel')}</button>
@@ -1053,7 +1079,7 @@ function askReport(btn) {
 function showStop(r) {
   held = r;
   // Текст окна зависит от причины: чужие деньги, звонок мошенника или подозрительный получатель.
-  $('stopText').textContent = tr({scheme: 'stopText', call: 'stopTextCall', grey: 'stopTextGrey', message: 'stopTextMessage', loan: 'stopTextLoan', rental: 'stopTextRental'}[r.kind] || 'stopText');
+  $('stopText').textContent = tr({scheme: 'stopText', call: 'stopTextCall', grey: 'stopTextGrey', message: 'stopTextMessage', loan: 'stopTextLoan', rental: 'stopTextRental', dictation: 'stopTextDictation'}[r.kind] || 'stopText');
   $('reasons').innerHTML = r.reasons.map(x => `<li>${esc(x.text)}</li>`).join('');
   $('law').hidden = r.kind !== 'scheme' && r.kind !== 'rental';
   $('repayLoan').hidden = !r.loan;
@@ -1096,7 +1122,11 @@ $('callToggle').onclick = async () => {
 $('send').onclick = async () => {
   note(''); $('send').disabled = true;
   try {
-    const r = await api('/transfers', {receiver_id: +$('to').value, amount: Math.floor(+$('amount').value)});
+    // Отметки приложения о ходе перевода («перевод под диктовку»). В демо их ставят переключатели слева.
+    const session = Object.fromEntries([...document.querySelectorAll('[data-sess]')].map(b => [b.dataset.sess, b.checked]));
+    const body = {receiver_id: +$('to').value, amount: Math.floor(+$('amount').value)};
+    if (Object.values(session).some(Boolean)) body.session = session;
+    const r = await api('/transfers', body);
     if (r.status === 'held') showStop(r);
     else if (r.status === 'pending') { note(tr('coolSent', {t: hm(r.release_at)}), 'err'); $('amount').value = ''; }
     else { note(tr('done'), 'ok'); $('amount').value = ''; }
@@ -1129,6 +1159,7 @@ function clearScreen() {
   $('guardAlerts').innerHTML = ''; $('guardianCard').innerHTML = ''; $('certCard').hidden = true;
   $('coolAlerts').innerHTML = ''; $('loanCard').innerHTML = ''; $('rentalCard').innerHTML = ''; $('bizLine').textContent = ''; $('msgText').value = ''; $('msgResult').innerHTML = ''; clearTimeout(coolTimer);
   $('compCards').innerHTML = ''; $('selfCard').hidden = true; selfKey = ''; selfMsg = '';
+  document.querySelectorAll('[data-sess]').forEach(b => { b.checked = false; });
 }
 $('who').onchange = async () => { clearScreen(); showTab('home'); await loginAs(+$('who').value); load(); };
 // Язык хранится в cookie: сервер читает его и отвечает на том же языке.

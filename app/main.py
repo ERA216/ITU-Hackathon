@@ -41,6 +41,7 @@ WARN_MIN_AMOUNT = 20_000        # входящие от незнакомцев �
 COMPLAINT_DAYS = 30             # на перевод можно пожаловаться в течение стольких дней
 COMPLAINT_LIMIT = 3             # жалоб от одного клиента за COMPLAINT_DAYS: защита от блокировок по ложным жалобам
 CHAIN_HOPS = 3                  # на сколько звеньев жалоба проходит по цепочке переводов
+INTERBANK_HOURS = 24            # срок ответа на запрос между банками через Антифрод-центр (в демо)
 GUARDIAN_KNOWN_DAYS = 30        # доверенное лицо: человек, с которым переводы идут дольше этого срока
 GUARDIAN_REMOVE_HOURS = 24      # отключение доверенного лица вступает в силу через сутки
 COOLING_MIN = 100_000           # крупный перевод новому получателю уходит не сразу
@@ -89,8 +90,14 @@ EVENT_TEXT = {
     "self_report": "Клиент сам сообщил банку, что его втянули в схему",
     "loan_repaid": "Клиент вернул кредит банку",
     "afc_refused": "Перевод получателю из «чёрного» списка Антифрод-центра не выполнен",
+    "interbank_out": "Деньги ушли в другой банк: отправлен запрос на заморозку",
+    "interbank_in": "Запрос другого банка через Антифрод-центр: перевод их клиента — мошенничество",
+    "interbank_answer": "Ответ другого банка на запрос",
 }
+INTERBANK_STATUS = {"sent": "Запрос отправлен, ждём ответ", "frozen": "Деньги заморожены в другом банке",
+                    "gone": "Деньги уже сняты или ушли дальше", "answered": "Ответили автоматически"}
 UNRESOLVED = ("open", "under_review", "kept")      # блокировка действует, пока случай в одном из этих статусов
+SESSION_CODES = {code for code, _, _ in engine.SESSION_SIGNALS}   # признаки «перевода под диктовку»
 SELF_REPORT_KINDS = {
     "card": "Передал карту, её данные или доступ к приложению другому человеку",
     "transit": "Принимал чужие деньги и пересылал их по чьей-то просьбе",
@@ -160,9 +167,18 @@ class LoginIn(BaseModel):
     pin: str = Field("", max_length=64)
 
 
+class SessionIn(BaseModel):
+    """Что приложение заметило во время перевода. Только отметки: ни буфера обмена, ни ссылок, ни номеров."""
+    on_call: bool = False       # идёт телефонный разговор
+    pasted: bool = False        # реквизиты вставлены из буфера обмена
+    from_link: bool = False     # приложение открыто по ссылке из мессенджера
+    new_device: bool = False    # вход с нового устройства меньше суток назад
+
+
 class TransferIn(BaseModel):
     receiver_id: int
     amount: int = Field(gt=0, le=100_000_000)
+    session: SessionIn | None = None
 
 
 class DocumentIn(BaseModel):
@@ -261,8 +277,9 @@ def _own_case(client: dict, case_id: int, kind: str):
 def demo_clients():
     """Персонажи для показа: под ними входит экран клиента."""
     ensure_demo()
-    rows = conn.execute("SELECT id, name FROM clients WHERE id >= 1001 ORDER BY id").fetchall()
-    return [{"id": r["id"], "name": i18n.name(r["id"], r["name"])} for r in rows]
+    rows = conn.execute("SELECT id, name, kind FROM clients WHERE id >= 1001 ORDER BY id").fetchall()
+    # Счета в другом банке нужны как получатели и отправители переводов, войти под ними нельзя.
+    return [{"id": r["id"], "name": i18n.name(r["id"], r["name"]), "external": r["kind"] == "external"} for r in rows]
 
 
 @app.post("/login")
@@ -281,7 +298,7 @@ def login(body: LoginIn, request: Request, response: Response):
         s = {"role": "analyst", "name": "Сотрудник банка"}
     elif body.role == "client":
         c = _client(body.client_id or 0)
-        if c["id"] < 1001:
+        if c["id"] < 1001 or c["kind"] == "external":
             raise HTTPException(403, "Войти можно только под демо-персонажем")
         s = {"role": "client", "client_id": c["id"], "name": c["name"]}
     else:
@@ -470,6 +487,7 @@ def _intercept_view(case) -> dict:
             "kind": "scheme" if inc else ("rental" if "ip_rental" in codes else
                                           "loan" if "loan_forward" in codes else
                                           "call" if "suspicious_call" in codes else
+                                          "dictation" if set(codes) & SESSION_CODES else
                                           "message" if "scam_message" in codes else "grey"),
             "loan": loan,
             "guardian": _guardian_name(case["guardian_id"]), "guardian_state": case["guardian_state"],
@@ -497,7 +515,8 @@ def create_transfer(body: TransferIn, s: dict = Depends(as_client)):
         # Соразмерная блокировка: свои деньги доступны, но только для тех, кому клиент переводил и раньше.
         raise HTTPException(403, t("limited_new_receiver"))
     now = _now()
-    res = engine.evaluate(conn, sender_id, body.receiver_id, body.amount, now)
+    res = engine.evaluate(conn, sender_id, body.receiver_id, body.amount, now,
+                          body.session.model_dump() if body.session else None)
     # На один «чужой» входящий существует не больше одного незакрытого случая.
     prev = None
     if res["decision"] == "hold" and res["incoming_id"] is not None:
@@ -668,13 +687,16 @@ def mark_known(tid: int, s: dict = Depends(as_client)):
     return {"ok": True}
 
 
-def _trace_complaint(tr, complaint_id: int, now: datetime, complainant: int) -> list[int]:
+def _trace_complaint(tr, complaint_id: int, now: datetime, complainant: int, actor: str | None = None) -> list[int]:
     """Идёт по цепочке от перевода пострадавшего и приостанавливает счета, через которые прошли его деньги.
 
     Звено, которое переслало деньги дальше, получает случай с этой пересылкой. Счёт, на котором деньги
     остались (начиная со второго звена), тоже приостанавливается: это обычно конечная карта дроппера.
     Первый получатель, который ещё ничего не переслал, не блокируется, а получает предупреждение.
+    Если деньги ушли на счёт в другом банке, приостановить его мы не можем: туда через Антифрод-центр
+    уходит запрос на заморозку (в демо — имитация, ответ даёт сотрудник во вкладке «Другие банки»).
     """
+    actor = actor or f"client:{complainant}"
     created, seen, frontier = [], {tr["sender_id"]}, [tr]
     for hop in range(1, CHAIN_HOPS + 1):
         nxt = []
@@ -683,6 +705,16 @@ def _trace_complaint(tr, complaint_id: int, now: datetime, complainant: int) -> 
             if holder in seen or _returned(inc["id"]):
                 continue
             seen.add(holder)
+            other = _client(holder)
+            if other["kind"] == "external":
+                due = now + timedelta(hours=INTERBANK_HOURS)
+                conn.execute("""INSERT INTO interbank(direction,bank,complaint_id,transfer_id,amount,status,sent_at,due_at)
+                                VALUES('out',?,?,?,?,'sent',?,?)""",
+                             (other["bank"], complaint_id, inc["id"], inc["amount"], now.isoformat(), due.isoformat()))
+                log("system", "interbank_out", None, inc["id"], bank=other["bank"], amount=inc["amount"], hop=hop,
+                    text=f"Деньги ушли в {other['bank']}: через Антифрод-центр отправлен запрос на заморозку "
+                         f"{_money(inc['amount'])}, ответ до {due.strftime('%d.%m %H:%M')}")
+                continue
             fwd = engine.find_forward(conn, holder, inc)
             if not fwd and hop == 1:
                 continue
@@ -719,7 +751,7 @@ def _trace_complaint(tr, complaint_id: int, now: datetime, complainant: int) -> 
             else:
                 text = "Операции приостановлены: " + text
             _refresh_status(holder)
-            log(f"client:{complainant}", "complaint", case_id, tr["id"], amount=tr["amount"])
+            log(actor, "interbank_in" if actor.startswith("bank:") else "complaint", case_id, tr["id"], amount=tr["amount"])
             log("system", "blocked", case_id, out_id or inc["id"], text=text, hop=hop,
                 scope="partial" if partial else "full", role=role["label"])
             created.append(case_id)
@@ -749,8 +781,12 @@ def complain(tid: int, s: dict = Depends(as_client)):
         outcome, text, cases = "already_returned", t("complaint_already_returned"), []
     else:
         cases = _trace_complaint(tr, complaint_id, now, s["client_id"])
-        outcome = "blocked" if cases else "warned"
-        text = t("complaint_blocked", n=len(cases)) if cases else t("complaint_warned")
+        asked = conn.execute("SELECT bank FROM interbank WHERE complaint_id=? AND direction='out'",
+                             (complaint_id,)).fetchall()
+        outcome = "blocked" if cases or asked else "warned"
+        text = t("complaint_blocked", n=len(cases)) if cases else t("complaint_warned") if not asked else ""
+        if asked:
+            text = (text + " " + t("complaint_interbank", b=asked[0]["bank"])).strip()
     conn.execute("UPDATE complaints SET outcome=?, case_id=? WHERE id=?",
                  (outcome, cases[0] if cases else None, complaint_id))
     if not cases:
@@ -764,11 +800,14 @@ def _complaint_state(p) -> dict:
     """Сколько денег пострадавшего заморожено в цепочке и сколько ему уже вернули."""
     tr = _incoming_row(p["transfer_id"])
     cases = conn.execute("SELECT * FROM cases WHERE complaint_id=?", (p["id"],)).fetchall()
+    asks = conn.execute("SELECT * FROM interbank WHERE complaint_id=? AND direction='out'", (p["id"],)).fetchall()
     returned = min(tr["amount"], _returned_sum(tr["id"]))
-    frozen = min(tr["amount"] - returned, sum(k["frozen"] for k in cases if k["status"] in UNRESOLVED))
+    # Заморожено и в нашем банке, и в других банках по нашим запросам (за вычетом того, что они уже вернули).
+    frozen = min(tr["amount"] - returned, sum(k["frozen"] for k in cases if k["status"] in UNRESOLVED)
+                 + sum(a["frozen"] - a["returned"] for a in asks if a["status"] == "frozen"))
     if returned >= tr["amount"]:
         stage = "returned"
-    elif any(k["status"] in ("open", "under_review") for k in cases):
+    elif any(k["status"] in ("open", "under_review") for k in cases) or any(a["status"] == "sent" for a in asks):
         stage = "checking"
     elif frozen:
         stage = "frozen"
@@ -776,7 +815,7 @@ def _complaint_state(p) -> dict:
         stage = "warned"
     else:
         stage = "closed"
-    return {"amount": tr["amount"], "returned": returned, "frozen": frozen, "stage": stage, "transfer": tr}
+    return {"amount": tr["amount"], "returned": returned, "frozen": frozen, "stage": stage, "transfer": tr, "asks": asks}
 
 
 def _complaints_view(cid: int) -> list[dict]:
@@ -789,9 +828,12 @@ def _complaints_view(cid: int) -> list[dict]:
         text = t("complaint.stage." + st["stage"], **vals)
         if st["returned"] and st["stage"] != "returned":
             text = t("complaint.part", **vals) + " " + text
+        # Что с деньгами, которые ушли в другой банк.
+        banks = [t("complaint.interbank." + a["status"], b=a["bank"], m=_money(a["frozen"] if a["status"] == "frozen" else a["amount"]),
+                   d=datetime.fromisoformat(a["due_at"]).strftime("%d.%m %H:%M")) for a in st["asks"]]
         out.append({"id": p["id"], "created_at": p["created_at"], "amount": st["amount"],
                     "receiver": i18n.name(who["id"], who["name"]), "stage": st["stage"],
-                    "returned": st["returned"], "frozen": st["frozen"], "text": text})
+                    "returned": st["returned"], "frozen": st["frozen"], "text": text, "banks": banks})
     return out
 
 
@@ -1603,13 +1645,21 @@ def _chain(case) -> list[dict]:
     victim = conn.execute(
         """SELECT c.name, t.amount FROM complaints p JOIN transfers t ON t.id=p.transfer_id
            JOIN clients c ON c.id=p.complainant_id WHERE p.id=?""", (case["complaint_id"],)).fetchone()
+    # Звенья в другом банке: приостановить их мы не можем, туда ушёл запрос через Антифрод-центр.
+    asks = conn.execute("""SELECT i.*, c.name FROM interbank i JOIN transfers t ON t.id=i.transfer_id
+                           JOIN clients c ON c.id=t.receiver_id WHERE i.complaint_id=? AND i.direction='out'""",
+                        (case["complaint_id"],)).fetchall()
     return [{"case_id": None, "hop": 0, "name": victim["name"], "amount": victim["amount"], "role": "victim",
              "status_text": "Пожаловался на мошенничество"}] + [
         {"case_id": r["id"], "hop": r["hop"], "name": r["name"], "amount": r["amount"],
          "role": "forwarded" if r["transfer_id"] else "holder", "current": r["id"] == case["id"],
          "scope": r["scope"], "frozen": r["frozen"] if r["status"] in UNRESOLVED else 0,
          "status_text": ANALYST_STATUS.get(("block", r["status"]), STATUS_TEXT.get(r["status"], r["status"]))}
-        for r in rows]
+        for r in rows] + [
+        {"case_id": None, "hop": None, "name": a["name"], "amount": a["amount"], "role": "external", "bank": a["bank"],
+         "frozen": a["frozen"] - a["returned"] if a["status"] == "frozen" else 0,
+         "status_text": f"{a['bank']}: {INTERBANK_STATUS[a['status']].lower()}"}
+        for a in asks]
 
 
 def _history(case_id: int) -> list[dict]:
@@ -1617,7 +1667,8 @@ def _history(case_id: int) -> list[dict]:
     out = []
     for e in rows:
         details = json.loads(e["details"]) if e["details"] else {}
-        who = {"system": "Система", "analyst": "Сотрудник банка"}.get(e["actor"], "Клиент")
+        who = {"system": "Система", "analyst": "Сотрудник банка"}.get(
+            e["actor"], e["actor"][5:] if e["actor"].startswith("bank:") else "Клиент")
         out.append({"at": e["at"], "who": who, "action": e["action"],
                     "text": details.get("text") or EVENT_TEXT.get(e["action"], e["action"]), "details": details})
     return out
@@ -1747,7 +1798,12 @@ def _graph(case, linked: dict | None, rental: dict | None) -> dict:
                             ORDER BY (status IN ('open','under_review','kept')) DESC, created_at DESC LIMIT 1""",
                          (i,)).fetchone()
         role = "current" if i == cid else "victim" if i in victims else "account"
+        # Счёт в другом банке: что ответил тот банк на наш запрос.
+        ask = conn.execute("""SELECT i.status, i.frozen FROM interbank i JOIN transfers t ON t.id=i.transfer_id
+                              WHERE t.receiver_id=? AND i.direction='out' ORDER BY i.id DESC LIMIT 1""",
+                           (i,)).fetchone() if c["kind"] == "external" else None
         nodes[i] = {"id": i, "name": c["name"], "status": c["status"], "kind": c["kind"], "role": role,
+                    "bank": c["bank"], "request": dict(ask) if ask else None,
                     "afc": engine.afc_status(conn, i), "age_days": (now - datetime.fromisoformat(c["account_opened_at"])).days,
                     "case_id": k["id"] if k else None,
                     "frozen": k["frozen"] if k and k["kind"] == "block" and k["status"] in UNRESOLVED else 0,
@@ -1764,7 +1820,7 @@ def _graph(case, linked: dict | None, rental: dict | None) -> dict:
         gid = f"more-{c_}"
         n = len(extra)
         word = "счёт" if n % 10 == 1 and n % 100 != 11 else "счёта" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "счетов"
-        nodes[gid] = {"id": gid, "name": f"ещё {n} {word}", "status": "active", "kind": "group",
+        nodes[gid] = {"id": gid, "name": f"ещё {n} {word}", "status": "active", "kind": "group", "bank": None, "request": None,
                       "role": "group", "afc": None, "age_days": None, "case_id": None, "frozen": 0, "col": c_,
                       "weight": sum(n["weight"] for n in extra)}
         hidden = {n["id"] for n in extra}
@@ -1927,6 +1983,120 @@ def suspend_rental(cid: int, s: dict = Depends(as_analyst)):
                           "text": f"Похоже на «аренду ИП»: за неделю деньги от {sig['payers']} незнакомых людей, "
                                   f"{sig['share']}% ушло частным лицам"},
                     "Операции приостановлены сотрудником: признаки «аренды ИП»")
+
+
+# ---------- Запросы между банками через Антифрод-центр ----------
+# В демо другой банк — имитация: его ответы на наши запросы и его запросы к нам создаёт сотрудник кнопками
+# во вкладке «Другие банки». В банке обмен идёт через Антифрод-центр Нацбанка автоматически.
+
+def _interbank_view(r) -> dict:
+    tr = _incoming_row(r["transfer_id"])
+    p = conn.execute("SELECT * FROM complaints WHERE id=?", (r["complaint_id"],)).fetchone() if r["complaint_id"] else None
+    ours = _client(tr["sender_id"] if r["direction"] == "out" else tr["receiver_id"])
+    owed = (_incoming_row(p["transfer_id"])["amount"] - _returned_sum(p["transfer_id"])) if p else 0
+    cases = [k["id"] for k in conn.execute("SELECT id FROM cases WHERE complaint_id=? ORDER BY hop, id",
+                                           (r["complaint_id"],))] if p else []
+    return dict(r) | {
+        "status_text": INTERBANK_STATUS[r["status"]],
+        "overdue": r["status"] == "sent" and r["due_at"] < _now().isoformat(),
+        "victim": _client(p["complainant_id"])["name"] if p else None,
+        "ours": ours["name"], "ours_id": ours["id"], "cases": cases,
+        "can_return": r["direction"] == "out" and r["status"] == "frozen" and min(r["frozen"] - r["returned"], owed) > 0,
+    }
+
+
+@app.get("/analyst/interbank")
+def analyst_interbank(s: dict = Depends(as_analyst)):
+    """Запросы в другие банки и из них. Для демо — ещё переводы из других банков, по которым можно имитировать запрос."""
+    since = (_now() - timedelta(days=COMPLAINT_DAYS)).isoformat()
+    demo = conn.execute(
+        """SELECT t.id, t.amount, t.created_at, s.name AS sender, s.bank, r.name AS receiver, r.id AS receiver_id
+           FROM transfers t JOIN clients s ON s.id=t.sender_id JOIN clients r ON r.id=t.receiver_id
+           WHERE s.kind='external' AND r.kind!='external' AND t.status='done' AND t.return_of IS NULL
+             AND t.created_at >= ? AND NOT EXISTS (SELECT 1 FROM complaints p WHERE p.transfer_id=t.id)
+           ORDER BY t.created_at DESC""", (since,)).fetchall()
+    return {"requests": [_interbank_view(r) for r in conn.execute("SELECT * FROM interbank ORDER BY sent_at DESC, id DESC")],
+            "incoming_demo": [dict(d) for d in demo]}
+
+
+class InterbankAnswerIn(BaseModel):
+    result: str          # frozen: деньги заморожены | gone: деньги уже ушли
+
+
+@app.post("/analyst/interbank/{rid}/answer")
+def interbank_answer(rid: int, body: InterbankAnswerIn, s: dict = Depends(as_analyst)):
+    """Демо: ответ другого банка на наш запрос."""
+    r = conn.execute("SELECT * FROM interbank WHERE id=?", (rid,)).fetchone()
+    if not r or r["direction"] != "out":
+        raise HTTPException(404, "Запрос не найден")
+    if r["status"] != "sent":
+        raise HTTPException(409, "На этот запрос уже ответили")
+    if body.result not in ("frozen", "gone"):
+        raise HTTPException(400, "Ответ должен быть frozen или gone")
+    frozen = r["amount"] if body.result == "frozen" else 0
+    note = (f"{r['bank']} заморозил {_money(frozen)}" if frozen else f"{r['bank']}: деньги уже сняты или ушли дальше")
+    conn.execute("UPDATE interbank SET status=?, frozen=?, answered_at=?, note=? WHERE id=?",
+                 (body.result, frozen, _now().isoformat(), note, rid))
+    log("system", "interbank_answer", None, r["transfer_id"], bank=r["bank"], text=note)
+    return _interbank_view(conn.execute("SELECT * FROM interbank WHERE id=?", (rid,)).fetchone())
+
+
+@app.post("/analyst/interbank/{rid}/return")
+def interbank_return(rid: int, s: dict = Depends(as_analyst)):
+    """Демо: другой банк возвращает пострадавшему деньги, которые заморозил по нашему запросу."""
+    r = conn.execute("SELECT * FROM interbank WHERE id=?", (rid,)).fetchone()
+    if not r or r["direction"] != "out":
+        raise HTTPException(404, "Запрос не найден")
+    p = conn.execute("SELECT * FROM complaints WHERE id=?", (r["complaint_id"],)).fetchone()
+    owed = _incoming_row(p["transfer_id"])["amount"] - _returned_sum(p["transfer_id"])
+    amount = min(r["frozen"] - r["returned"], owed) if r["status"] == "frozen" else 0
+    if amount <= 0:
+        raise HTTPException(409, "Возвращать нечего: деньги не заморожены или уже возвращены")
+    holder = _incoming_row(r["transfer_id"])["receiver_id"]       # счёт в другом банке
+    cur = conn.execute(
+        "INSERT INTO transfers(sender_id,receiver_id,amount,created_at,status,return_of) VALUES(?,?,?,?,?,?)",
+        (holder, p["complainant_id"], amount, _now().isoformat(), "done", p["transfer_id"]))
+    _move(holder, p["complainant_id"], amount)
+    conn.execute("UPDATE interbank SET returned = returned + ? WHERE id=?", (amount, rid))
+    log("system", "refunded", None, cur.lastrowid, amount=amount, text=f"{r['bank']} вернул пострадавшему {_money(amount)}")
+    return _interbank_view(conn.execute("SELECT * FROM interbank WHERE id=?", (rid,)).fetchone())
+
+
+class InterbankInIn(BaseModel):
+    transfer_id: int
+
+
+@app.post("/analyst/interbank/incoming")
+def interbank_incoming(body: InterbankInIn, s: dict = Depends(as_analyst)):
+    """Демо: другой банк сообщает, что перевод их клиента нашему клиенту — мошенничество.
+
+    Система сама идёт по цепочке в нашем банке, как по жалобе своего клиента, и сразу отвечает, сколько заморожено.
+    """
+    tr = conn.execute("SELECT * FROM transfers WHERE id=?", (body.transfer_id,)).fetchone()
+    if not tr:
+        raise HTTPException(404, "Перевод не найден")
+    sender, receiver = _client(tr["sender_id"]), _client(tr["receiver_id"])
+    if sender["kind"] != "external" or receiver["kind"] == "external" or tr["status"] != "done" or tr["return_of"]:
+        raise HTTPException(400, "Это не перевод из другого банка нашему клиенту")
+    if conn.execute("SELECT 1 FROM complaints WHERE transfer_id=?", (tr["id"],)).fetchone():
+        raise HTTPException(409, "По этому переводу запрос уже был")
+    now = _now()
+    complaint_id = conn.execute(
+        "INSERT INTO complaints(transfer_id,complainant_id,outcome,created_at) VALUES(?,?,?,?)",
+        (tr["id"], sender["id"], "pending", now.isoformat())).lastrowid
+    cases = [] if _returned(tr["id"]) else _trace_complaint(tr, complaint_id, now, sender["id"], actor=f"bank:{sender['bank']}")
+    conn.execute("UPDATE complaints SET outcome=?, case_id=? WHERE id=?",
+                 ("blocked" if cases else "warned", cases[0] if cases else None, complaint_id))
+    frozen = sum(conn.execute("SELECT frozen FROM cases WHERE id=?", (k,)).fetchone()["frozen"] for k in cases)
+    note = (f"Ответ отправлен автоматически: в нашем банке заморожено {_money(frozen)}, приостановлено счетов: {len(cases)}"
+            if cases else "Ответ отправлен автоматически: получатель ещё ничего не переслал, его предупредили")
+    rid = conn.execute(
+        """INSERT INTO interbank(direction,bank,complaint_id,transfer_id,amount,status,frozen,sent_at,due_at,answered_at,note)
+           VALUES('in',?,?,?,?,'answered',?,?,?,?,?)""",
+        (sender["bank"], complaint_id, tr["id"], tr["amount"], frozen, now.isoformat(),
+         (now + timedelta(hours=INTERBANK_HOURS)).isoformat(), now.isoformat(), note)).lastrowid
+    log("system", "interbank_in", cases[0] if cases else None, tr["id"], bank=sender["bank"], text=note)
+    return _interbank_view(conn.execute("SELECT * FROM interbank WHERE id=?", (rid,)).fetchone())
 
 
 @app.post("/analyst/cases/{case_id}/escalate")
