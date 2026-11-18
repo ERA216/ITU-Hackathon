@@ -61,7 +61,8 @@
   <p class="lead" id="lead">Загружаем показатели…</p>
   <div class="note" id="simNote" hidden>Демо-данные. Какие переводы остановить, решал настоящий движок на синтетических переводах. Что дальше сделали клиенты и сотрудники банка (вернули деньги, настояли на переводе, сняли блокировку), смоделировано по заданным вероятностям. Ваши действия в демо добавляются к этим цифрам.</div>
 
-  <section class="group"><h2>Деньги</h2><div class="tiles" id="money"></div></section>
+  <section class="group"><h2>Деньги</h2><div class="tiles" id="money"></div>
+    <p class="muted" style="margin:12px 0 0">«Не пришлось возмещать» — оценка. По закону о платежах банк возмещает клиенту перевод на счёт, который уже был в базе Антифрод-центра. Считаем переводы на такие счета, которые не ушли: остановленные системой, отклонённые по «чёрному» списку и отменённые в период охлаждения.</p></section>
 
   <section class="group">
     <h2>Сохранено по дням, ₸</h2>
@@ -71,7 +72,7 @@
   </section>
 
   <section class="group"><h2>Профилактика</h2>
-    <p class="muted">Только действия в демо: в смоделированной истории периода охлаждения и проверок сообщений нет.</p>
+    <p class="muted">Только действия в демо: в смоделированной истории периода охлаждения, кредитов и проверок сообщений нет.</p>
     <div class="tiles" id="prevent"></div></section>
   <section class="group"><h2>Нагрузка на сотрудников</h2><div class="tiles" id="load"></div></section>
   <section class="group"><h2>Ошибки системы</h2><div class="tiles" id="errors"></div></section>
@@ -139,9 +140,11 @@ function drawBars(host, data) {
   $('money').innerHTML =
     tile('Сохранено от мошенников', compact(m.saved_amount), 'остановленные переводы, которые не ушли получателю') +
     tile('Возвращено отправителям', compact(m.returned_amount), `${num(m.returned_count)} возвратов кнопкой «Вернуть отправителю»`) +
-    tile('Клиентов уберегли от статуса дроппера', num(m.protected_clients), 'вернули чужие деньги, а не переслали их дальше');
+    tile('Клиентов уберегли от статуса дроппера', num(m.protected_clients), 'вернули чужие деньги, а не переслали их дальше') +
+    tile('Не пришлось возмещать', compact(m.compensation_avoided), `${num(m.compensation_count)} переводов на счета из базы Антифрод-центра не ушли`);
   $('prevent').innerHTML =
     tile('Отменено в период охлаждения', compact(m.cooling_saved), `${num(m.cooling_cancelled)} из ${num(m.cooling)} отложенных крупных первых переводов`) +
+    tile('Остановлено денег из свежего кредита', compact(m.loan_saved), `${num(m.loan_stops)} остановок, кредитов вернули банку: ${num(m.loans_repaid)}`) +
     tile('Проверено сообщений', num(m.message_checks), `похожи на схемы мошенников: ${num(m.message_danger)}`);
   $('load').innerHTML =
     tile('Остановлено переводов', num(m.stops), `ждут решения сейчас: ${num(m.pending_stops)}`) +

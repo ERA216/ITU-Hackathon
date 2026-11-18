@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS recruit_marks (
 CREATE TABLE IF NOT EXISTS message_checks (
     id INTEGER PRIMARY KEY,             -- проверка подозрительного сообщения; сам текст не хранится
     client_id INTEGER NOT NULL REFERENCES clients(id),
-    scheme TEXT,                        -- mistaken | safe_account | investment | job | NULL
+    scheme TEXT,                        -- mistaken | safe_account | investment | job | fake_letter | fake_alert | fake_invoice | NULL
     verdict TEXT NOT NULL,              -- danger | caution | none
     at TEXT NOT NULL
 );
@@ -116,6 +116,13 @@ CREATE TABLE IF NOT EXISTS self_reports (
     case_id INTEGER REFERENCES cases(id),
     code TEXT NOT NULL UNIQUE,          -- код проверки подтверждения
     at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS loans (
+    id INTEGER PRIMARY KEY,             -- кредит наличными: деньги банка зачисляются на счёт клиента
+    client_id INTEGER NOT NULL REFERENCES clients(id),
+    amount INTEGER NOT NULL,
+    issued_at TEXT NOT NULL,
+    repaid_at TEXT                      -- клиент вернул кредит банку (досрочное погашение)
 );
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
@@ -134,7 +141,7 @@ CREATE TABLE IF NOT EXISTS documents (
 """
 
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 
 def connect(path: str | None = None) -> sqlite3.Connection:

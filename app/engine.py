@@ -19,6 +19,9 @@ RECRUIT_SENDERS = 3
 RECRUIT_MIN_AMOUNT = 20_000
 RECRUIT_ACCOUNT_DAYS = 90
 SCAM_MESSAGE_MINUTES = 60           # сколько действует признак «клиент проверил сообщение, похожее на схему»
+# Схема «встречный кредит»: клиента уговаривают взять кредит и сразу перевести деньги «на безопасный счёт».
+LOAN_HOURS = 72                     # сколько после выдачи кредита следим, куда уходят его деньги
+LOAN_SHARE = 0.5                    # признак срабатывает, когда новым получателям уходит половина кредита и больше
 
 
 def _dt(s: str) -> datetime:
@@ -117,6 +120,18 @@ def evaluate(conn, sender_id: int, receiver_id: int, amount: int, now: datetime)
     if rec and now - _dt(rec["account_opened_at"]) < timedelta(days=YOUNG_ACCOUNT_DAYS):
         add("young_receiver", 10, "Счёт получателя открыт меньше месяца назад")
 
+    # Деньги свежего кредита уходят тому, с кем до кредита не было переводов. Одного этого признака мало
+    # (честный клиент может оплатить кредитом покупку), остановка нужна вместе с новым счётом получателя,
+    # звонком или «серым» списком. Части складываются: раздробить сумму не поможет.
+    loan = fresh_loan(conn, sender_id, now)
+    if loan and not _had_contact(conn, sender_id, receiver_id, loan["issued_at"]):
+        sent = sum(r["amount"] for r in conn.execute(
+            """SELECT receiver_id, amount FROM transfers WHERE sender_id=? AND status IN ('done','pending')
+               AND return_of IS NULL AND created_at >= ?""", (sender_id, loan["issued_at"])).fetchall()
+            if not _had_contact(conn, sender_id, r["receiver_id"], loan["issued_at"]))
+        if sent + amount >= LOAN_SHARE * loan["amount"]:
+            add("loan_forward", 40, "Деньги из кредита, выданного меньше трёх суток назад, уходят новому получателю")
+
     # Внешние сигналы: база Антифрод-центра и оператор связи («Телеком Антифрод»).
     if afc_status(conn, receiver_id) == "grey":
         add("afc_grey", 50, "Получатель в списке подозрительных счетов Антифрод-центра")
@@ -170,6 +185,13 @@ def scam_message(conn, client_id: int, now: datetime) -> str | None:
                           AND at >= ? AND at <= ? ORDER BY at DESC LIMIT 1""",
                        (client_id, since, now.isoformat())).fetchone()
     return row["scheme"] if row else None
+
+
+def fresh_loan(conn, client_id: int, now: datetime):
+    """Последний непогашенный кредит, выданный за последние LOAN_HOURS часов."""
+    since = (now - timedelta(hours=LOAN_HOURS)).isoformat()
+    return conn.execute("""SELECT * FROM loans WHERE client_id=? AND repaid_at IS NULL AND issued_at >= ? AND issued_at <= ?
+                           ORDER BY issued_at DESC LIMIT 1""", (client_id, since, now.isoformat())).fetchone()
 
 
 def afc_status(conn, client_id: int) -> str | None:

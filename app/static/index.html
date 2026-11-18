@@ -217,6 +217,9 @@
           <button class="soft" data-example="safe" data-t="exSafe"></button>
           <button class="soft" data-example="invest" data-t="exInvest"></button>
           <button class="soft" data-example="job" data-t="exJob"></button>
+          <button class="soft" data-example="letter" data-t="exLetter"></button>
+          <button class="soft" data-example="alert" data-t="exAlert"></button>
+          <button class="soft" data-example="invoice" data-t="exInvoice"></button>
         </div>
       </div>
     </div>
@@ -246,6 +249,7 @@
 
         <div id="callAlert"></div>
         <div id="coolAlerts"></div>
+        <div id="loanCard"></div>
         <div id="guardAlerts"></div>
         <div id="alerts"></div>
         <div id="compCards"></div>
@@ -301,6 +305,7 @@
         <p id="stopGuardian" class="muted"></p>
         <div class="law" id="law" data-t="law"></div>
         <button class="primary" id="ret"></button>
+        <button class="primary" id="repayLoan"></button>
         <button class="primary" id="withdraw" data-t="withdraw"></button>
         <button class="ghost" id="insist" data-t="insist"></button>
         <button class="ghost" id="later" data-t="later"></button>
@@ -355,6 +360,8 @@ const T = {
               'Даниярдың тұрақты жеткізушісі: даулы сома бұғатталса да, Данияр оған төлей алады.'],
   hint_1012: ['Отдал карту «работодателю». Во вкладке «Защита» может сам сообщить банку, что его втянули в схему.',
               'Картасын «жұмыс берушіге» берді. «Қорғау» бөлімінде схемаға тартылғанын банкке өзі хабарлай алады.'],
+  hint_1013: ['40 минут назад взял кредит 800 000 ₸: «служба безопасности банка» сказала, что так он отменит чужую заявку. Переведите эти деньги на «Безопасный счёт» — перевод остановится. Кредит можно вернуть банку с главной.',
+              '40 минут бұрын 800 000 ₸ несие алды: «банктің қауіпсіздік қызметі» осылай бөтен өтінімнің күшін жоятынын айтты. Бұл ақшаны «Қауіпсіз шотқа» аударыңыз — аударым тоқтайды. Несиені басты беттен банкке қайтаруға болады.'],
   who: ['Войти как', 'Кім ретінде кіру'],
   analystLink: ['Панель аналитика банка', 'Банк талдаушысының панелі'],
   available: ['Доступно', 'Қолжетімді'],
@@ -496,6 +503,9 @@ const T = {
   exSafe: ['«Безопасный счёт»', '«Қауіпсіз шот»'],
   exInvest: ['Инвестиции', 'Инвестиция'],
   exJob: ['«Подработка»', '«Қосымша жұмыс»'],
+  exLetter: ['Письмо «от Нацбанка»', '«Ұлттық банктен» хат'],
+  exAlert: ['«Оформлена доверенность»', '«Сенімхат рәсімделді»'],
+  exInvoice: ['Счёт «от налоговой»', '«Салық органынан» шот'],
   exText_mistaken: ['Здравствуйте! Я по ошибке перевела вам 150 000 тенге, это деньги на операцию для мамы. Пожалуйста, верните срочно на карту 4400 0000 1234 5678, моя карта заблокирована.',
                     'Сәлеметсіз бе! Сізге 150 000 теңгені қате аударып жібердім, бұл анамның отасына арналған ақша. Өтінемін, тез арада 4400 0000 1234 5678 картасына қайтарыңыз.'],
   exText_safe: ['Служба безопасности банка. На ваше имя пытаются оформить кредит. Чтобы сохранить деньги, переведите их на безопасный счёт. Никому не сообщайте о звонке.',
@@ -504,8 +514,26 @@ const T = {
                   '«Профит» инвестиция платформасы: күніне 3% кепілдендірілген табыс. 50 000 теңгеден салыңыз. Тіркеліңіз: bit.ly/profit-kz'],
   exText_job: ['Подработка для студентов! Нужно принимать переводы на свою карту и переводить дальше, оплата 5% от суммы. Работа на дому, 1–2 часа в день.',
                'Студенттерге қосымша жұмыс! Картаңызға аударымдарды қабылдап, әрі қарай аудару керек, сомадан 5% төлейміз. Үйден жұмыс.'],
+  exText_letter: ['Национальный Банк Республики Казахстан. Исх. № 08-2/1147. По вашему делу установлено, что сбережения под угрозой. Для безопасного возврата средств переведите их на депозит Нацбанка KZ123456789012345678. Документ подписан ЭЦП.',
+                  'Қазақстан Республикасының Ұлттық Банкі. Хат № 08-2/1147. Жинақтарыңыз қауіпте. Ақшаны қауіпсіз қайтару үшін оны Ұлттық банктің шотына аударыңыз: KZ123456789012345678. Құжатқа ЭЦҚ қойылған.'],
+  exText_alert: ['eGov: на ваше имя оформлена цифровая доверенность на распоряжение банковскими счетами. Если это не вы, срочно позвоните в службу поддержки по номеру +7 700 418 22 90.',
+                 'eGov: сіздің атыңызға банк шоттарын басқаруға цифрлық сенімхат рәсімделді. Егер бұл сіз болмасаңыз, +7 700 418 22 90 нөміріне тез арада қоңырау шалыңыз.'],
+  exText_invoice: ['КГД РК: у вас налоговая задолженность 48 300 тенге. Счёт на оплату выставлен в вашем мобильном банке. Оплатите сегодня, иначе будет наложен арест на счета и начислены пени.',
+                   'МКК: сізде 48 300 теңге салық берешегі бар. Төлем шоты мобильді банкіңізге жіберілді. Бүгін төлеңіз, әйтпесе шоттарға тыйым салынып, өсімпұл есептеледі.'],
   stopTextMessage: ['Вы недавно проверили сообщение, и оно похоже на схему мошенников. А теперь переводите деньги новому получателю. Банк остановил перевод, чтобы вы могли ещё раз всё проверить.',
                     'Жақында тексерген хабарламаңыз алаяқтар схемасына ұқсайды. Ал енді жаңа алушыға ақша аударып жатырсыз. Бәрін қайта тексеруіңіз үшін банк аударымды тоқтатты.'],
+  stopTextLoan: ['Вы переводите на новый счёт деньги из кредита, который взяли меньше трёх суток назад. Так работает схема «встречный кредит»: звонят от имени банка или полиции, пугают чужой заявкой и просят взять кредит и перевести деньги на «безопасный счёт». Отменить кредит переводом нельзя.',
+                 'Үш тәуліктен аз уақыт бұрын алған несиеңіздің ақшасын жаңа шотқа аударып жатырсыз. «Қарсы несие» схемасы осылай жұмыс істейді: банк не полиция атынан қоңырау шалып, бөтен өтініммен қорқытады да, несие алып, ақшаны «қауіпсіз шотқа» аударуды сұрайды. Несиенің күшін аударыммен жою мүмкін емес.'],
+  loanIn: ['Кредит наличными', 'Қолма-қол ақшаға несие'],
+  loanOut: ['Возврат кредита банку', 'Несиені банкке қайтару'],
+  loanH: ['Вы взяли кредит {m}', 'Сіз {m} несие алдыңыз'],
+  loanText: ['Банк никогда не просит оформить кредит, чтобы «отменить чужую заявку» или «защитить деньги». Если вас об этом попросили по телефону или в мессенджере, не переводите эти деньги: верните их банку, кредит закроется досрочно.',
+             'Банк ешқашан «бөтен өтінімнің күшін жою» немесе «ақшаны қорғау» үшін несие рәсімдеуді сұрамайды. Сізден мұны телефон не мессенджер арқылы сұраса, бұл ақшаны аудармаңыз: оны банкке қайтарыңыз, несие мерзімінен бұрын жабылады.'],
+  loanTerms: ['Условия досрочного погашения указаны в договоре займа.', 'Мерзімінен бұрын өтеу шарттары қарыз шартында көрсетілген.'],
+  loanRepay: ['Вернуть кредит {m}', '{m} несиені қайтару'],
+  loanRepayOk: ['Кредит {m} возвращён банку и закрыт.', '{m} несие банкке қайтарылып, жабылды.'],
+  guardKindLoan: ['Деньги из только что взятого кредита уходят на новый счёт. Похоже на схему «встречный кредит».',
+                  'Жаңа ғана алынған несиенің ақшасы жаңа шотқа кетіп жатыр. «Қарсы несие» схемасына ұқсайды.'],
   coolH: ['Перевод уйдёт в {t}', 'Аударым {t} кетеді'],
   coolText: ['{m}, получатель: {r}. Крупный первый перевод новому получателю мы придерживаем на час. Если вас торопят, звонят от имени банка или полиции или просят никому не говорить, отмените его.',
              '{m}, алушы: {r}. Жаңа алушыға алғашқы ірі аударымды бір сағатқа ұстап тұрамыз. Сізді асықтырса, банк не полиция атынан қоңырау шалса немесе ешкімге айтпауды сұраса, оны болдырмаңыз.'],
@@ -713,6 +741,7 @@ async function load() {
   renderSelf(c.self_report, c.status);
   renderGuardRequests(c.guardian_requests || []);
   renderCooling(c.cooling || [], c.guardian_cooling || []);
+  renderLoan(c.loan);
   loadGuardian();
   const chosen = $('to').value;
   $('to').innerHTML = people.filter(p => p.id !== me).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
@@ -721,7 +750,7 @@ async function load() {
   renderAlerts(blocked ? [] : c.feed, c.recruit);   // пока счёт приостановлен, вернуть деньги самому нельзя
   $('feed').innerHTML = c.feed.map(t => {
     const incoming = t.direction === 'in';
-    const title = t.refund ? tr('refundTitle') : t.return_of ? tr('returnTitle') : (incoming ? tr('from', {who: t.sender}) : tr('toWho', {who: t.receiver}));
+    const title = t.loan ? tr(incoming ? 'loanIn' : 'loanOut') : t.refund ? tr('refundTitle') : t.return_of ? tr('returnTitle') : (incoming ? tr('from', {who: t.sender}) : tr('toWho', {who: t.receiver}));
     let tag = incoming ? null : heldTag(t);
     if (incoming && t.warning) tag = ['warn', tr('tagMaybeForeign')];
     if (incoming && t.returned) tag = ['', tr('tagReturnedIn')];
@@ -857,7 +886,7 @@ function renderGuardRequests(items) {
     <div class="alert guard">
       <h2>${esc(tr('guardH', {w: g.ward}))}</h2>
       <p>${esc(tr('guardText', {m: money(g.amount), r: g.receiver}))}</p>
-      <p><b>${tr({call: 'guardKindCall', grey: 'guardKindGrey'}[g.kind] || 'guardKindScheme')}</b></p>
+      <p><b>${tr({call: 'guardKindCall', grey: 'guardKindGrey', loan: 'guardKindLoan'}[g.kind] || 'guardKindScheme')}</b></p>
       <p>${esc(g.state === 'asked' ? tr('guardAsked', {w: g.ward}) : g.status === 'open' ? tr('guardNotified') : tr('tagReview'))}</p>
       <div class="actions">
         <button class="primary" data-gcancel="${g.case_id}">${tr('guardCancel')}</button>
@@ -929,6 +958,23 @@ function renderCooling(own, wards) {
   if (next !== undefined) coolTimer = setTimeout(load, Math.min(Math.max(next, 0) + 1500, 600000));
 }
 
+// Свежий кредит: напоминаем, что банк не просит брать кредит ради «отмены заявки», и даём вернуть его.
+async function repayLoan(id) {
+  try { const r = await api(`/loans/${id}/repay`, {}); note(tr('loanRepayOk', {m: money(r.amount)}), 'ok'); $('amount').value = ''; }
+  catch (e) { note(e.message, 'err'); }
+  load();
+}
+function renderLoan(loan) {
+  $('loanCard').innerHTML = loan ? `
+    <div class="alert">
+      <h2>${esc(tr('loanH', {m: money(loan.amount)}))}</h2>
+      <p>${tr('loanText')}</p>
+      <div class="actions"><button class="primary" id="loanRepay">${esc(tr('loanRepay', {m: money(loan.amount)}))}</button></div>
+      <p style="font-size:14px">${tr('loanTerms')}</p>
+    </div>` : '';
+  if (loan) $('loanRepay').onclick = () => { $('loanRepay').disabled = true; repayLoan(loan.id); };
+}
+
 // Проверка подозрительного сообщения: схема, что насторожило и что делать.
 $('msgCheck').onclick = async () => {
   $('msgCheck').disabled = true;
@@ -975,9 +1021,11 @@ function askReport(btn) {
 function showStop(r) {
   held = r;
   // Текст окна зависит от причины: чужие деньги, звонок мошенника или подозрительный получатель.
-  $('stopText').textContent = tr({scheme: 'stopText', call: 'stopTextCall', grey: 'stopTextGrey', message: 'stopTextMessage'}[r.kind] || 'stopText');
+  $('stopText').textContent = tr({scheme: 'stopText', call: 'stopTextCall', grey: 'stopTextGrey', message: 'stopTextMessage', loan: 'stopTextLoan'}[r.kind] || 'stopText');
   $('reasons').innerHTML = r.reasons.map(x => `<li>${esc(x.text)}</li>`).join('');
   $('law').hidden = r.kind !== 'scheme';
+  $('repayLoan').hidden = !r.loan;
+  if (r.loan) $('repayLoan').textContent = tr('loanRepay', {m: money(r.loan.amount)});
   $('ret').hidden = !r.safe_return;
   $('withdraw').hidden = !!r.safe_return;
   if (r.safe_return) $('ret').textContent = tr('ret', {m: money(r.safe_return.amount)});
@@ -1037,6 +1085,7 @@ $('insist').onclick = async () => {
   catch (e) { note(e.message, 'err'); }
   load();
 };
+$('repayLoan').onclick = () => { $('overlay').classList.remove('show'); repayLoan(held.loan.id); };
 $('later').onclick = () => { $('overlay').classList.remove('show'); load(); };
 // При смене клиента сразу убираем экран прежнего: иначе можно успеть нажать кнопку в чужом случае.
 function clearScreen() {
@@ -1046,7 +1095,7 @@ function clearScreen() {
   $('feed').innerHTML = ''; $('balance').textContent = '…'; $('heldLine').textContent = '';
   $('recipientNote').innerHTML = ''; $('callAlert').innerHTML = '';
   $('guardAlerts').innerHTML = ''; $('guardianCard').innerHTML = ''; $('certCard').hidden = true;
-  $('coolAlerts').innerHTML = ''; $('msgText').value = ''; $('msgResult').innerHTML = ''; clearTimeout(coolTimer);
+  $('coolAlerts').innerHTML = ''; $('loanCard').innerHTML = ''; $('msgText').value = ''; $('msgResult').innerHTML = ''; clearTimeout(coolTimer);
   $('compCards').innerHTML = ''; $('selfCard').hidden = true; selfKey = ''; selfMsg = '';
 }
 $('who').onchange = async () => { clearScreen(); showTab('home'); await loginAs(+$('who').value); load(); };

@@ -102,7 +102,7 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
     with_history=True добавляет историю случаев за 30 дней для панели эффективности (см. app/history.py).
     """
     if reset:
-        for table in ("self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
+        for table in ("loans", "self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
             conn.execute(f"DELETE FROM {table}")
     now = (now or clock.now()).replace(microsecond=0)
     rng = random.Random(seed)
@@ -176,6 +176,7 @@ def _demo_personas(conn, now: datetime):
         (1010, "Ерлан (нашёл «подработку»)", now - timedelta(days=45), 8000, "honest"),
         (1011, "Оптовый склад (поставщик Данияра)", now - timedelta(days=1500), 320000, "honest"),
         (1012, "Тимур (студент, отдал карту «работодателю»)", now - timedelta(days=210), 6000, "honest"),
+        (1013, "Болат (взял кредит по звонку «из банка»)", now - timedelta(days=1500), 23000, "honest"),
     ]
     conn.executemany(
         "INSERT INTO clients(id,name,account_opened_at,balance,true_kind) VALUES(?,?,?,?,?)",
@@ -245,6 +246,14 @@ def _demo_personas(conn, now: datetime):
         conn.execute("INSERT INTO transfers(sender_id,receiver_id,amount,created_at,scenario) VALUES(?,?,?,?,?)",
                      (sender, 1012, amount, (now - timedelta(hours=20 - 9 * n)).isoformat(), "demo_in"))
 
+    # Болату позвонила «служба безопасности банка»: на него якобы оформляют кредит, и чтобы «перехватить» заявку,
+    # нужно взять встречный кредит и перевести деньги на «безопасный счёт». Кредит он уже взял (ниже), до этого
+    # счётом пользовался обычно.
+    for n, (pair, amount) in enumerate([((1013, 31), 15000), ((44, 1013), 120000), ((1013, 31), 22000),
+                                        ((1013, 57), 8000), ((44, 1013), 120000), ((1013, 57), 9500)]):
+        conn.execute("INSERT INTO transfers(sender_id,receiver_id,amount,created_at,scenario) VALUES(?,?,?,?,?)",
+                     (*pair, amount, (now - timedelta(days=170 - 28 * n)).isoformat(), "demo"))
+
     # Имитация базы Антифрод-центра: «чёрный» список — подтверждённые мошенники, «серый» — подозрительные.
     conn.executemany("INSERT INTO afc_list(client_id,list,added_at,note) VALUES(?,?,?,?)", [
         (1008, "black", (now - timedelta(days=20)).isoformat(), "Лжеинвестиционная платформа, подтверждено"),
@@ -256,6 +265,10 @@ def _demo_personas(conn, now: datetime):
                       + COALESCE((SELECT SUM(amount) FROM transfers WHERE receiver_id=clients.id AND status='done'), 0)
                       - COALESCE((SELECT SUM(amount) FROM transfers WHERE sender_id=clients.id AND status='done'), 0)
                     WHERE id >= 1001""")
+    # Кредит наличными зачисляется на счёт напрямую (это деньги банка, а не перевод от клиента).
+    conn.execute("INSERT INTO loans(client_id,amount,issued_at) VALUES(1013,800000,?)",
+                 ((now - timedelta(minutes=40)).isoformat(),))
+    conn.execute("UPDATE clients SET balance = balance + 800000 WHERE id=1013")
     case_id = conn.execute("SELECT id FROM cases WHERE client_id=1007").fetchone()["id"]
     conn.execute("INSERT INTO events(at,actor,action,case_id,transfer_id,details) VALUES(?,?,?,?,?,?)",
                  ((last[3] + timedelta(hours=1)).isoformat(), "system", "blocked", case_id, last[0],

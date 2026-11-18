@@ -1,8 +1,11 @@
 """Показатели для руководства банка: сколько денег сохранено, сколько работы у сотрудников, насколько быстро
 решаются апелляции и как часто система ошибается. Всё считается по случаям и переводам в базе.
 """
+import json
 import statistics
 from datetime import datetime, timedelta
+
+KEPT = ("returned", "cancelled", "withdrawn", "guardian_cancelled")   # остановленный перевод так и не ушёл
 
 
 def _hours(a: str, b: str) -> float:
@@ -19,7 +22,7 @@ def compute(conn, now: datetime, days: int = 30) -> dict:
     for k in stops:
         by.setdefault(k["status"], []).append(k)
     # Деньги не ушли получателю: вернули отправителю, отменил банк, клиент или его доверенное лицо.
-    kept = by.get("returned", []) + by.get("cancelled", []) + by.get("withdrawn", []) + by.get("guardian_cancelled", [])
+    kept = [k for s in KEPT for k in by.get(s, [])]
     # Возвраты пострадавшим по жалобам считаются отдельно: это не «клиент сам вернул чужие деньги».
     not_refund = "id NOT IN (SELECT transfer_id FROM events WHERE action='refunded' AND transfer_id IS NOT NULL)"
     returns = conn.execute(
@@ -73,6 +76,8 @@ def compute(conn, now: datetime, days: int = 30) -> dict:
         "self_reports": conn.execute("SELECT COUNT(*) AS n FROM self_reports WHERE at >= ?", (since,)).fetchone()["n"],
         "guardian_cancelled": len(by.get("guardian_cancelled", [])),
         **_cooling_and_messages(conn, since),
+        **_compensation(conn, since),
+        **_loans(conn, since),
         "clearances": conn.execute("SELECT COUNT(*) AS n FROM clearances WHERE issued_at >= ?", (since,)).fetchone()["n"],
         "blocks": len(blocks),
         "appeals": len(appeals),
@@ -114,6 +119,38 @@ def linked_accounts(conn, min_sources: int = 2) -> list[dict]:
         out.append({"client_id": dest, "name": c["name"], "status": c["status"], "opened": c["account_opened_at"],
                     "sources": len(a["sources"]), "cases": sorted(a["cases"]), "amount": a["amount"], "last": a["last"]})
     return sorted(out, key=lambda x: (x["status"] == "blocked", -x["sources"], -x["amount"]))
+
+
+def _compensation(conn, since: str) -> dict:
+    """Сколько банку не пришлось бы возмещать (оценка).
+
+    По закону о платежах банк возмещает клиенту перевод на счёт, который уже был в базе Антифрод-центра.
+    Считаем переводы на такие счета, которые не ушли: остановленные движком, отклонённые по «чёрному» списку
+    и отменённые в период охлаждения. Получатель должен быть в базе к моменту остановки или ухода денег.
+    """
+    q = ",".join("?" * len(KEPT))
+    stops = conn.execute(
+        f"""SELECT COUNT(*) AS n, COALESCE(SUM(t.amount),0) AS s FROM cases k JOIN transfers t ON t.id=k.transfer_id
+            JOIN afc_list a ON a.client_id=t.receiver_id AND a.added_at <= k.created_at
+            WHERE k.kind='intercept' AND k.created_at >= ? AND k.status IN ({q})""", (since, *KEPT)).fetchone()
+    cooling = conn.execute(
+        """SELECT COUNT(*) AS n, COALESCE(SUM(t.amount),0) AS s FROM transfers t
+           JOIN afc_list a ON a.client_id=t.receiver_id AND a.added_at <= t.release_at
+           WHERE t.release_at IS NOT NULL AND t.status='cancelled' AND t.created_at >= ?""", (since,)).fetchone()
+    refused = [json.loads(r["details"] or "{}").get("amount", 0) for r in conn.execute(
+        "SELECT details FROM events WHERE action='afc_refused' AND at >= ?", (since,))]
+    return {"compensation_avoided": stops["s"] + cooling["s"] + sum(refused),
+            "compensation_count": stops["n"] + cooling["n"] + len(refused),
+            "compensation_refused": sum(refused)}
+
+
+def _loans(conn, since: str) -> dict:
+    """Схема «встречный кредит»: сколько переводов денег из свежего кредита остановлено и сколько кредитов вернули."""
+    rows = conn.execute(
+        """SELECT k.status, t.amount FROM cases k JOIN transfers t ON t.id=k.transfer_id
+           WHERE k.kind='intercept' AND k.created_at >= ? AND k.reasons LIKE '%"loan_forward"%'""", (since,)).fetchall()
+    return {"loan_stops": len(rows), "loan_saved": sum(r["amount"] for r in rows if r["status"] in KEPT),
+            "loans_repaid": conn.execute("SELECT COUNT(*) AS n FROM loans WHERE repaid_at >= ?", (since,)).fetchone()["n"]}
 
 
 def _cooling_and_messages(conn, since: str) -> dict:

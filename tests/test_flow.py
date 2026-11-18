@@ -194,7 +194,7 @@ def test_analyst_code_is_checked_and_rate_limited():
 def test_empty_database_is_filled_on_first_request(tmp_path):
     main.conn.close()
     main.conn = db.connect(str(tmp_path / "empty.db"))
-    assert len(TestClient(main.app).get("/demo/clients").json()) == 12
+    assert len(TestClient(main.app).get("/demo/clients").json()) == 13
 
 
 def test_stale_demo_data_is_recreated():
@@ -408,7 +408,7 @@ def test_old_database_is_rebuilt(tmp_path):
     old.close()
     main.conn.close()
     main.conn = db.connect(str(path))
-    assert len(TestClient(main.app).get("/demo/clients").json()) == 12
+    assert len(TestClient(main.app).get("/demo/clients").json()) == 13
 
 
 def test_quality_page_is_served_with_current_threshold():
@@ -1213,3 +1213,169 @@ def test_restricted_client_cannot_self_report_and_kazakh_texts():
     tim.cookies.set("ca_lang", "kk")
     assert tim.post("/self-report", json={"kind": "card", "details": WORDS}).json()["text"].startswith("Хабарлағаныңызға")
     assert "құқық қорғау" in tim.get(f"/clients/{CARD_GIVER}/self-report").text
+
+
+# ---------- Схемы осени 2026: письмо «от Нацбанка», ложное уведомление, счёт «от налоговой» ----------
+
+def test_new_message_schemes_are_recognized_in_both_languages():
+    mom = client(MOM)
+    for text, scheme in [
+        ("Национальный Банк РК. Исх. № 08-2/1147. Для безопасного возврата средств переведите их на депозит Нацбанка.",
+         "fake_letter"),
+        ("Ұлттық Банк. Хат № 08-2/1147. Ақшаны қауіпсіз қайтару үшін оны Ұлттық банктің шотына аударыңыз.", "fake_letter"),
+        ("eGov: на ваше имя оформлена цифровая доверенность. Если это не вы, позвоните в поддержку по номеру +7 700 418 22 90",
+         "fake_alert"),
+        ("Сіздің атыңызға цифрлық сенімхат рәсімделді. Егер бұл сіз болмасаңыз, нөмірге хабарласыңыз.", "fake_alert"),
+        ("Одобрена кредитная заявка на 2 000 000 тенге. Если вы не подавали заявку, перезвоните по номеру 8 800 000 00 00",
+         "fake_alert"),
+        ("КГД РК: у вас налоговая задолженность 48 300 тенге. Счёт на оплату выставлен, иначе арест на счета.", "fake_invoice"),
+        ("МКК: сізде салық берешегі бар. Төлем шоты жіберілді, әйтпесе өсімпұл есептеледі.", "fake_invoice"),
+        # «Встречный кредит» — это та же схема «безопасный счёт».
+        ("Чтобы отменить чужую заявку, оформите встречный кредит и переведите деньги на резервный счёт.", "safe_account"),
+    ]:
+        r = mom.post("/messages/check", json={"text": text}).json()
+        assert (r["scheme"], r["verdict"]) == (scheme, "danger"), text
+        assert len(r["advice"]) == 3 and r["title"]
+    # Похожие честные сообщения не помечаются.
+    for text in ["Счёт на оплату за ноябрь во вложении", "Оплатите штраф до пятницы",
+                 "Подписал доверенность у нотариуса на машину", "Национальный банк повысил базовую ставку"]:
+        assert mom.post("/messages/check", json={"text": text}).json()["verdict"] != "danger", text
+    mom.cookies.set("ca_lang", "kk")
+    r = mom.post("/messages/check", json={"text": "КГД: налоговая задолженность, счёт на оплату выставлен"}).json()
+    assert r["title"].startswith("«Салық органынан»")
+
+
+def test_new_scheme_message_strengthens_next_transfer():
+    mom = client(MOM)
+    mom.post("/messages/check", json={"text": "Национальный банк. Для безопасного возврата средств переведите на депозит Нацбанка"})
+    r = send(mom, SAFE_ACCOUNT, 50000).json()
+    assert r["status"] == "held" and r["kind"] == "message"
+
+
+# ---------- Свежий кредит: схема «встречный кредит» ----------
+
+BORROWER = 1013
+
+
+def test_loan_money_to_new_young_account_is_held_and_loan_repaid():
+    bolat = client(BORROWER)
+    acc = account(bolat, BORROWER)
+    assert acc["loan"]["amount"] == 800000 and acc["available"] == 1008500
+    loan_in = next(t for t in acc["feed"] if t.get("loan"))
+    assert loan_in["direction"] == "in" and not loan_in["warning"]       # кредит — не «чужие деньги»
+    assert acc["recruit"] is None
+    r = send(bolat, SAFE_ACCOUNT, 800000).json()
+    assert r["status"] == "held" and r["kind"] == "loan" and r["loan"]["amount"] == 800000
+    assert "loan_forward" in {x["code"] for x in r["reasons"]}
+    # Вернуть кредит может только его владелец.
+    assert client(MOM).post(f"/loans/{r['loan']['id']}/repay").status_code == 404
+    ok = bolat.post(f"/loans/{r['loan']['id']}/repay").json()
+    assert ok == {"status": "repaid", "amount": 800000}
+    acc = account(bolat, BORROWER)
+    assert acc["available"] == 208500 and acc["held"] == 0 and acc["loan"] is None
+    assert any(t.get("loan") and t["direction"] == "out" for t in acc["feed"])
+    case = main.conn.execute("SELECT status FROM cases WHERE id=?", (r["case_id"],)).fetchone()
+    assert case["status"] == "withdrawn"
+    assert bolat.post(f"/loans/{r['loan']['id']}/repay").status_code == 409
+    assert main.conn.execute("SELECT 1 FROM events WHERE action='loan_repaid' AND case_id=?", (r["case_id"],)).fetchone()
+
+
+def test_loan_money_to_old_account_waits_but_is_not_held():
+    # Честный клиент оплачивает кредитом покупку у продавца со старым счётом: только период охлаждения.
+    r = send(client(BORROWER), MOM, 500000).json()
+    assert r["status"] == "pending"
+    assert "loan_forward" in {x["code"] for x in r["reasons"]}
+
+
+def test_loan_split_into_parts_is_caught():
+    bolat = client(BORROWER)
+    first = send(bolat, SAFE_ACCOUNT, 300000).json()
+    assert first["status"] == "pending"                  # меньше половины кредита: признака ещё нет
+    second = send(bolat, SAFE_ACCOUNT, 200000).json()
+    assert second["status"] == "held" and second["kind"] == "loan"
+
+
+def test_old_loan_is_not_a_signal():
+    main.conn.execute("UPDATE loans SET issued_at=? WHERE client_id=?",
+                      ((main._now() - timedelta(hours=engine.LOAN_HOURS + 1)).isoformat(), BORROWER))
+    main.conn.commit()
+    r = send(client(BORROWER), SAFE_ACCOUNT, 800000).json()
+    assert r["status"] == "pending" and "loan_forward" not in {x["code"] for x in r["reasons"]}
+    assert account(client(BORROWER), BORROWER)["loan"] is None
+
+
+def test_loan_repay_needs_the_money_and_rolls_back():
+    bolat = client(BORROWER)
+    assert send(bolat, MOM, 300000).json()["status"] == "pending"    # 300 000 зарезервированы до ухода
+    held = send(bolat, SAFE_ACCOUNT, 700000).json()
+    assert held["status"] == "held"
+    r = bolat.post(f"/loans/{held['loan']['id']}/repay")
+    assert r.status_code == 400 and "708 500" in r.json()["detail"]
+    # Ничего не изменилось: остановленный перевод на месте, кредит не погашен.
+    assert main.conn.execute("SELECT status FROM cases WHERE id=?", (held["case_id"],)).fetchone()["status"] == "open"
+    assert account(bolat, BORROWER)["loan"] is not None
+
+
+def test_guardian_sees_loan_kind():
+    mom = client(MOM)
+    main.conn.execute("INSERT INTO loans(client_id,amount,issued_at) VALUES(?,?,?)",
+                      (MOM, 400000, main._now().isoformat()))
+    main.conn.execute("UPDATE clients SET balance = balance + 400000 WHERE id=?", (MOM,))
+    main.conn.commit()
+    r = send(mom, SAFE_ACCOUNT, 400000).json()
+    assert r["status"] == "held" and r["kind"] == "loan"
+    req = account(client(STUDENT), STUDENT)["guardian_requests"][0]
+    assert req["kind"] == "loan" and req["amount"] == 400000
+
+
+def test_loan_texts_in_kazakh():
+    bolat = client(BORROWER)
+    bolat.cookies.set("ca_lang", "kk")
+    r = send(bolat, SAFE_ACCOUNT, 800000).json()
+    assert any(x["text"].startswith("Үш тәуліктен аз") for x in r["reasons"])
+    assert bolat.post("/loans/999/repay").json()["detail"] == "Несие табылмады"
+
+
+# ---------- Возмещение, которого банку не пришлось платить ----------
+
+def test_compensation_counts_blacklist_refusals_and_listed_stops():
+    an = analyst()
+    before = an.get("/analyst/metrics").json()
+    mom, st = client(MOM), client(STUDENT)
+    r = send(mom, FAKE_INVEST, 50000)
+    assert r.status_code == 403 and "Антифрод" in r.json()["detail"]
+    held = send(st, DROP_CARD, 150000).json()                         # «Карта для возврата» в «сером» списке
+    st.post(f"/cases/{held['case_id']}/return-to-sender")
+    # Остановка на счёт не из базы Антифрод-центра в эту сумму не входит.
+    loan = send(client(BORROWER), SAFE_ACCOUNT, 800000).json()
+    client(BORROWER).post(f"/cases/{loan['case_id']}/withdraw")
+    after = an.get("/analyst/metrics").json()
+    assert after["compensation_avoided"] - before["compensation_avoided"] == 200000
+    assert after["compensation_count"] - before["compensation_count"] == 2
+    assert after["compensation_refused"] - before["compensation_refused"] == 50000
+    assert after["loan_stops"] == before["loan_stops"] + 1 and after["loan_saved"] == before["loan_saved"] + 800000
+
+
+def test_cooling_transfer_to_account_listed_meanwhile_counts_as_avoided_compensation():
+    an, mom = analyst(), client(MOM)
+    before = an.get("/analyst/metrics").json()["compensation_avoided"]
+    r = send(mom, VICTIM, 120000).json()
+    assert r["status"] == "pending"
+    # Пока перевод ждёт, получатель попадает в базу Антифрод-центра, и клиент отменяет перевод.
+    main.conn.execute("INSERT INTO afc_list(client_id,list,added_at) VALUES(?,?,?)",
+                      (VICTIM, "grey", main._now().isoformat()))
+    main.conn.commit()
+    assert mom.post(f"/transfers/{r['transfer_id']}/cancel").status_code == 200
+    assert an.get("/analyst/metrics").json()["compensation_avoided"] == before + 120000
+
+
+def test_history_lists_droppers_only_after_first_stop(with_history):
+    rows = main.conn.execute(
+        """SELECT a.client_id, a.added_at, c.true_kind,
+                  (SELECT MIN(k.created_at) FROM cases k JOIN transfers t ON t.id=k.transfer_id
+                   WHERE k.kind='intercept' AND t.receiver_id=a.client_id) AS first
+           FROM afc_list a JOIN clients c ON c.id=a.client_id WHERE a.client_id < 1001""").fetchall()
+    assert rows and {r["true_kind"] for r in rows} == {"dropper"}
+    assert all(r["added_at"] > r["first"] for r in rows)
+    m = analyst().get("/analyst/metrics").json()
+    assert 0 < m["compensation_avoided"] < m["saved_amount"]

@@ -87,6 +87,8 @@ EVENT_TEXT = {
     "refunded": "Деньги возвращены пострадавшему",
     "escalated": "Сотрудник приостановил счёт полностью",
     "self_report": "Клиент сам сообщил банку, что его втянули в схему",
+    "loan_repaid": "Клиент вернул кредит банку",
+    "afc_refused": "Перевод получателю из «чёрного» списка Антифрод-центра не выполнен",
 }
 UNRESOLVED = ("open", "under_review", "kept")      # блокировка действует, пока случай в одном из этих статусов
 SELF_REPORT_KINDS = {
@@ -394,8 +396,10 @@ def client_feed(cid: int, s: dict = Depends(session)):
             item["complained"] = bool(conn.execute("SELECT 1 FROM complaints WHERE transfer_id=?",
                                                    (r["id"],)).fetchone())
         feed.append(item)
+    feed = sorted(feed + _loan_feed(cid), key=lambda x: x["created_at"], reverse=True)[:30]
     return {"id": c["id"], "name": c["name"], "balance": c["balance"], "held": held, "frozen": frozen,
             "available": max(0, c["balance"] - held - frozen), "status": c["status"], "feed": feed,
+            "loan": _loan_view(cid) if c["status"] != "blocked" else None,
             "call": _call_info(cid),
             "complaints": _complaints_view(cid),
             "self_report": _self_report_view(cid),
@@ -453,13 +457,17 @@ def _intercept_view(case) -> dict:
     tr = conn.execute(
         """SELECT t.amount, t.receiver_id, c.name FROM transfers t JOIN clients c ON c.id=t.receiver_id WHERE t.id=?""",
         (case["transfer_id"],)).fetchone()
+    loan = _loan_view(case["client_id"]) if "loan_forward" in codes else None
     return {"case_id": case["id"], "transfer_id": case["transfer_id"], "status": "held",
             "case_status": case["status"], "score": case["score"],
             "reasons": i18n.reasons(json.loads(case["reasons"])),
             "amount": tr["amount"], "receiver": i18n.name(tr["receiver_id"], tr["name"]),
-            # Что показать клиенту в окне остановки: схема с чужими деньгами, звонок или подозрительный получатель.
-            "kind": "scheme" if inc else ("call" if "suspicious_call" in codes else
+            # Что показать клиенту в окне остановки: схема с чужими деньгами, деньги из свежего кредита,
+            # звонок или подозрительный получатель.
+            "kind": "scheme" if inc else ("loan" if "loan_forward" in codes else
+                                          "call" if "suspicious_call" in codes else
                                           "message" if "scam_message" in codes else "grey"),
+            "loan": loan,
             "guardian": _guardian_name(case["guardian_id"]), "guardian_state": case["guardian_state"],
             "safe_return": {"to_id": inc["sender_id"], "to_name": i18n.name(inc["sender_id"], inc["name"]),
                             "amount": inc["amount"]} if inc else None}
@@ -476,7 +484,10 @@ def create_transfer(body: TransferIn, s: dict = Depends(as_client)):
     if sender["status"] == "blocked":
         raise HTTPException(403, t("account_blocked"))
     if engine.afc_status(conn, body.receiver_id) == "black":
-        raise HTTPException(403, t("afc_black"))
+        # Отказ записываем в журнал (ответ без исключения, иначе запись откатится): по закону банк возмещает клиенту
+        # перевод на счёт из базы Антифрод-центра, и панель эффективности считает, сколько возмещать не пришлось.
+        log(f"client:{sender_id}", "afc_refused", None, None, receiver=body.receiver_id, amount=body.amount)
+        return JSONResponse({"detail": t("afc_black")}, status_code=403)
     if sender["status"] == "limited" and not engine._had_contact(conn, sender_id, body.receiver_id,
                                                                  _limited_since(sender_id)):
         # Соразмерная блокировка: свои деньги доступны, но только для тех, кому клиент переводил и раньше.
@@ -1287,6 +1298,57 @@ def guardian_cancel_pending(tid: int, s: dict = Depends(as_client)):
     if tr["status"] != "pending":
         raise HTTPException(409, t("cooling_none"))
     return _cancel_pending(tr, f"client:{s['client_id']}")
+
+
+# ---------- Свежий кредит: схема «встречный кредит» ----------
+# Кредит — деньги банка, а не перевод между клиентами: выдача и погашение меняют баланс напрямую
+# и в движке не считаются «входящим от незнакомца».
+
+def _loan_view(cid: int) -> dict | None:
+    """Свежий непогашенный кредит: клиенту показываем, что его можно вернуть банку."""
+    loan = engine.fresh_loan(conn, cid, _now())
+    return {"id": loan["id"], "amount": loan["amount"], "issued_at": loan["issued_at"]} if loan else None
+
+
+def _loan_feed(cid: int) -> list[dict]:
+    """Выдача и погашение кредита в ленте операций клиента."""
+    out = []
+    for ln in conn.execute("SELECT * FROM loans WHERE client_id=?", (cid,)).fetchall():
+        base = {"loan": True, "amount": ln["amount"], "status": "done", "return_of": None, "case_id": None,
+                "sender_id": None, "receiver_id": None, "warning": False, "returned": False, "complained": False,
+                "refund": False, "can_complain": False}
+        out.append(base | {"id": f"loan-{ln['id']}", "direction": "in", "created_at": ln["issued_at"]})
+        if ln["repaid_at"]:
+            out.append(base | {"id": f"loan-{ln['id']}-repaid", "direction": "out", "created_at": ln["repaid_at"]})
+    return out
+
+
+@app.post("/loans/{loan_id}/repay")
+def repay_loan(loan_id: int, s: dict = Depends(as_client)):
+    """Клиент возвращает кредит банку. Остановленные переводы этих денег отменяются, резерв освобождается."""
+    cid = s["client_id"]
+    loan = conn.execute("SELECT * FROM loans WHERE id=? AND client_id=?", (loan_id, cid)).fetchone()
+    if not loan:
+        raise HTTPException(404, t("loan_not_found"))
+    if loan["repaid_at"]:
+        raise HTTPException(409, t("loan_repaid"))
+    if _client(cid)["status"] == "blocked":
+        raise HTTPException(403, t("account_blocked"))
+    cases = [k for k in conn.execute(
+        """SELECT * FROM cases WHERE client_id=? AND kind='intercept' AND status IN ('open','under_review')""",
+        (cid,)).fetchall() if any(r.get("code") == "loan_forward" for r in json.loads(k["reasons"]))]
+    for case in cases:
+        conn.execute("UPDATE transfers SET status='cancelled' WHERE id=?", (case["transfer_id"],))
+        conn.execute("UPDATE cases SET status='withdrawn' WHERE id=?", (case["id"],))
+        log(f"client:{cid}", "withdrawn", case["id"], case["transfer_id"])
+    available = max(0, _available(cid))
+    if available < loan["amount"]:
+        raise HTTPException(400, t("loan_no_funds", available=_money(available), amount=_money(loan["amount"])))
+    conn.execute("UPDATE clients SET balance = balance - ? WHERE id=?", (loan["amount"], cid))
+    conn.execute("UPDATE loans SET repaid_at=? WHERE id=?", (_now().isoformat(), loan_id))
+    for case in cases or [None]:
+        log(f"client:{cid}", "loan_repaid", case["id"] if case else None, None, amount=loan["amount"])
+    return {"status": "repaid", "amount": loan["amount"]}
 
 
 # ---------- Проверка подозрительного сообщения ----------

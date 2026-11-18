@@ -12,6 +12,7 @@ HISTORY_DAYS = 30
 P_RETURN = 0.70            # клиент, которому прислали чужие деньги, сам возвращает их отправителю
 P_APPEAL = 0.85            # заблокированный после жалобы клиент подаёт апелляцию
 P_UNBLOCK = 0.90           # сотрудник снимает блокировку с невольного участника
+AFC_DELAY_HOURS = (24, 72) # через сколько после первой остановки Антифрод-центр вносит счёт в «серый» список
 EXPLANATIONS = [
     "Мне написали, что перевели деньги по ошибке, и попросили вернуть на карту родственника.",
     "Покупатель оплатил товар, потом попросил вернуть деньги на другую карту, сказал, что передумал.",
@@ -27,7 +28,25 @@ def simulate(conn, stats: dict, now: datetime, rng: random.Random) -> None:
     for p in stats["passed"]:
         if p["t"] >= since and p["scen"].startswith("tri_"):
             _missed_scheme(conn, p, now, rng)
+    _afc_listing(conn, now, rng)
     _apply_statuses(conn)
+
+
+def _afc_listing(conn, now: datetime, rng: random.Random):
+    """Банк сообщает в Антифрод-центр о дропперском счёте, и через 1–3 дня счёт попадает в «серый» список.
+
+    Остановки переводов на счёт, который уже в списке, панель эффективности считает возмещением,
+    которого банку не пришлось платить. Движок в истории решал до этих записей, на его решения они не влияют.
+    """
+    rows = conn.execute(
+        """SELECT t.receiver_id AS rid, MIN(k.created_at) AS first FROM cases k
+           JOIN transfers t ON t.id=k.transfer_id JOIN clients c ON c.id=t.receiver_id
+           WHERE k.kind='intercept' AND c.true_kind='dropper' GROUP BY t.receiver_id ORDER BY t.receiver_id""").fetchall()
+    for r in rows:
+        added = _later(datetime.fromisoformat(r["first"]), rng, *AFC_DELAY_HOURS)
+        if added <= now:
+            conn.execute("INSERT OR IGNORE INTO afc_list(client_id,list,added_at,note) VALUES(?,?,?,?)",
+                         (r["rid"], "grey", added.isoformat(), "Сообщения банков о переводах от незнакомцев (смоделировано)"))
 
 
 def _ev(conn, at: datetime, actor: str, action: str, case_id: int, transfer_id: int | None, **details):
