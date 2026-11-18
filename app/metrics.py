@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from . import engine
 
 KEPT = ("returned", "cancelled", "withdrawn", "guardian_cancelled")   # остановленный перевод так и не ушёл
+NET_DAYS = 90       # переводы между подозрительными счетами за этот срок связывают их в одну сеть
+NET_MIN = 3         # в сети не меньше трёх счетов
 
 
 def _hours(a: str, b: str) -> float:
@@ -82,6 +84,8 @@ def compute(conn, now: datetime, days: int = 30) -> dict:
         **_loans(conn, since),
         **_rental(conn, since, now),
         **_interbank(conn, since),
+        **_safes(conn, since),
+        **_networks_summary(conn, now),
         "clearances": conn.execute("SELECT COUNT(*) AS n FROM clearances WHERE issued_at >= ?", (since,)).fetchone()["n"],
         "blocks": len(blocks),
         "appeals": len(appeals),
@@ -123,6 +127,56 @@ def linked_accounts(conn, min_sources: int = 2) -> list[dict]:
         out.append({"client_id": dest, "name": c["name"], "status": c["status"], "opened": c["account_opened_at"],
                     "sources": len(a["sources"]), "cases": sorted(a["cases"]), "amount": a["amount"], "last": a["last"]})
     return sorted(out, key=lambda x: (x["status"] == "blocked", -x["sources"], -x["amount"]))
+
+
+def networks(conn, now: datetime) -> list[dict]:
+    """Сети дропперов: счета, связанные общим «дроп-телефоном» или переводами между подозрительными счетами.
+
+    Подозрительный счёт — на дроп-ферме (engine.farm_devices), с признаками дроппера (engine.dropper_marks) или
+    «связанный» (встречается в нескольких независимых случаях). Пострадавшие и счета других банков в сеть не входят:
+    их деньги видны на графе сети, но сами они не дропперы.
+    """
+    farms = engine.farm_devices(conn, now)
+    cand = ({r["client_id"] for r in conn.execute("SELECT client_id FROM afc_list")}
+            | {r["id"] for r in conn.execute("SELECT id FROM clients WHERE status != 'active'")}
+            | {r["client_id"] for r in conn.execute("SELECT DISTINCT client_id FROM cases WHERE kind='intercept' AND status='cancelled'")})
+    marks = engine.dropper_marks(conn, cand)
+    suspects = ({i for i, m in marks.items() if m} | {a["client_id"] for a in linked_accounts(conn)}
+                | {i for f in farms for i in f["accounts"]})
+    suspects -= {r["id"] for r in conn.execute("SELECT id FROM clients WHERE kind='external'")}
+    parent = {i: i for i in suspects}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for f in farms:
+        for i in f["accounts"][1:]:
+            parent[find(i)] = find(f["accounts"][0])
+    since = (now - timedelta(days=NET_DAYS)).isoformat()
+    for t in conn.execute("""SELECT sender_id, receiver_id FROM transfers WHERE created_at >= ? AND return_of IS NULL
+                             AND status IN ('done','held','pending')""", (since,)):
+        a, b = t["sender_id"], t["receiver_id"]
+        if a in parent and b in parent and a != b:
+            parent[find(a)] = find(b)
+    groups: dict[int, set] = {}
+    for i in suspects:
+        groups.setdefault(find(i), set()).add(i)
+    out = []
+    for members in groups.values():
+        if len(members) < NET_MIN:
+            continue
+        out.append({"key": f"n{min(members)}", "members": sorted(members),
+                    "farms": [f for f in farms if f["accounts"][0] in members]})
+    return sorted(out, key=lambda n: -len(n["members"]))
+
+
+def _networks_summary(conn, now: datetime) -> dict:
+    found = networks(conn, now)
+    return {"networks": len(found), "network_accounts": sum(len(n["members"]) for n in found),
+            "network_farms": sum(len(n["farms"]) for n in found)}
 
 
 def _compensation(conn, since: str) -> dict:
@@ -169,8 +223,23 @@ def _rental(conn, since: str, now: datetime) -> dict:
             FROM cases k JOIN transfers t ON t.id=k.transfer_id
             WHERE k.kind='intercept' AND k.created_at >= ? AND ({" OR ".join("k.reasons LIKE ?" for _ in engine.SESSION_SIGNALS)})""",
         (*KEPT, since, *[f'%"{code}"%' for code, _, _ in engine.SESSION_SIGNALS])).fetchone()
+    casino = conn.execute("""SELECT COUNT(*) AS n FROM cases WHERE kind='intercept' AND created_at >= ?
+                             AND reasons LIKE '%"casino_payout"%'""", (since,)).fetchone()["n"]
     return {"rental_accounts": accounts, "rental_stops": count("intercept"), "rental_suspended": count("block"),
+            "casino_stops": casino,
             "dictation_stops": dictation["n"], "dictation_saved": dictation["s"]}
+
+
+def _safes(conn, since: str) -> dict:
+    """«Сейф»: сколько денег под замком, сколько переводов он не дал сделать, сколько раз просили открыть и отменили."""
+    total = conn.execute("""SELECT COUNT(*) AS n, COALESCE(SUM(MIN(s.amount, c.balance)), 0) AS a
+                            FROM safes s JOIN clients c ON c.id=s.client_id WHERE s.amount > 0""").fetchone()
+    ev = lambda action: [json.loads(r["details"] or "{}").get("amount", 0) for r in conn.execute(   # noqa: E731
+        "SELECT details FROM events WHERE action=? AND at >= ?", (action, since))]
+    refused = ev("safe_refused")
+    return {"safe_clients": total["n"], "safe_amount": total["a"], "safe_refused": len(refused),
+            "safe_refused_amount": sum(refused), "safe_unlock_requests": len(ev("safe_unlock_requested")),
+            "safe_unlock_cancelled": len(ev("safe_unlock_cancelled"))}
 
 
 def _interbank(conn, since: str) -> dict:

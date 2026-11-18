@@ -178,7 +178,8 @@ def test_anonymous_and_foreign_access_is_refused():
     # Отправитель берётся из сессии: подставить чужой счёт в запрос нельзя.
     forged = mom.post("/transfers", json={"sender_id": STUDENT, "receiver_id": STRANGER, "amount": 1000}).json()
     assert forged["status"] == "done"
-    assert account(st, STUDENT)["balance"] == 192000 and account(mom, MOM)["balance"] == 149000
+    # У Мамы ещё 1 500 000 ₸ сбережений в «Сейфе».
+    assert account(st, STUDENT)["balance"] == 192000 and account(mom, MOM)["balance"] == 1649000
 
 
 def test_analyst_code_is_checked_and_rate_limited():
@@ -194,7 +195,7 @@ def test_analyst_code_is_checked_and_rate_limited():
 def test_empty_database_is_filled_on_first_request(tmp_path):
     main.conn.close()
     main.conn = db.connect(str(tmp_path / "empty.db"))
-    assert len(TestClient(main.app).get("/demo/clients").json()) == 20
+    assert len(TestClient(main.app).get("/demo/clients").json()) == 21
 
 
 def test_stale_demo_data_is_recreated():
@@ -408,7 +409,7 @@ def test_old_database_is_rebuilt(tmp_path):
     old.close()
     main.conn.close()
     main.conn = db.connect(str(path))
-    assert len(TestClient(main.app).get("/demo/clients").json()) == 20
+    assert len(TestClient(main.app).get("/demo/clients").json()) == 21
 
 
 def test_quality_page_is_served_with_current_threshold():
@@ -513,7 +514,8 @@ def test_demo_balances_match_the_transfers():
     an = analyst()
     for cid in (STUDENT, STRANGER, DROP_CARD, MOM, SELLER, VICTIM, TRANSIT):
         assert account(an, cid)["balance"] >= 0
-    assert account(an, STUDENT)["balance"] == 192000 and account(an, MOM)["balance"] == 150000
+    assert account(an, STUDENT)["balance"] == 192000 and account(an, MOM)["balance"] == 1650000   # 1,5 млн — в сейфе
+    assert account(an, MOM)["available"] == 150000 and account(an, MOM)["safe"]["amount"] == 1500000
     assert account(an, DROP_CARD)["balance"] > 195000      # деньги из цепочки действительно лежат на карте
 
 
@@ -637,7 +639,7 @@ def test_black_listed_recipient_is_refused():
     assert mom.get(f"/recipients/{FAKE_INVEST}/check").json()["list"] == "black"
     r = send(mom, FAKE_INVEST, 50000)
     assert r.status_code == 403 and "подтверждённых мошенников" in r.json()["detail"]
-    assert account(an, FAKE_INVEST)["balance"] == 0 and account(mom, MOM)["balance"] == 150000
+    assert account(an, FAKE_INVEST)["balance"] == 0 and account(mom, MOM)["available"] == 150000
 
 
 def test_grey_listed_recipient_is_paused_and_can_be_withdrawn():
@@ -652,7 +654,7 @@ def test_grey_listed_recipient_is_paused_and_can_be_withdrawn():
     assert account(mom, MOM)["held"] == 30000
     assert mom.post(f"/cases/{r['case_id']}/withdraw").json()["status"] == "withdrawn"
     acc = account(mom, MOM)
-    assert acc["held"] == 0 and acc["balance"] == 150000
+    assert acc["held"] == 0 and acc["available"] == 150000
 
 
 def test_call_signal_pauses_a_transfer_to_a_new_recipient_only():
@@ -1635,3 +1637,171 @@ def test_request_from_other_bank_is_traced_and_answered_automatically():
     assert client(STUDENT).post("/analyst/interbank/incoming", json={"transfer_id": tr["id"]}).status_code == 401
     m = an.get("/analyst/metrics").json()
     assert (m["interbank_in"], m["interbank_in_frozen"]) == (1, 140000)
+
+
+# ---------- «Сейф» ----------
+
+def test_safe_keeps_money_from_transfers_and_opens_only_after_a_day():
+    mom, guard = client(MOM), client(STUDENT)
+    # В сейфе 1,5 млн: перевести больше доступного нельзя, отказ остаётся в журнале.
+    r = send(mom, SELLER, 400000)
+    assert r.status_code == 400 and "сейф" in r.json()["detail"]
+    assert main.conn.execute("SELECT COUNT(*) FROM events WHERE action='safe_refused'").fetchone()[0] == 1
+    # Открыть через сутки: пока деньги в сейфе, доверенное лицо видит просьбу и может её отменить.
+    v = mom.post("/safe/unlock", json={"amount": 500000, "way": "delay"}).json()
+    assert v["amount"] == 1500000 and v["unlock_amount"] == 500000 and v["unlock_at"]
+    assert account(mom, MOM)["available"] == 150000
+    asked = account(guard, STUDENT)["guardian_safe"]
+    assert asked[0]["ward_id"] == MOM and asked[0]["amount"] == 500000
+    assert client(SELLER).post(f"/guardian/safe/{MOM}/cancel").status_code == 404     # чужой отменить не может
+    assert guard.post(f"/guardian/safe/{MOM}/cancel").json()["unlock_amount"] is None
+    assert mom.post("/safe/keep").status_code == 409                                    # просьбы больше нет
+    # Новая просьба; сутки прошли — деньги доступны.
+    mom.post("/safe/unlock", json={"amount": 500000, "way": "delay"})
+    main.conn.execute("UPDATE safes SET unlock_at=? WHERE client_id=?",
+                      ((main._now() - timedelta(minutes=1)).isoformat(), MOM))
+    acc = account(mom, MOM)
+    assert acc["safe"]["amount"] == 1000000 and acc["safe"]["unlock_at"] is None and acc["available"] == 650000
+    assert send(mom, SELLER, 400000).json()["status"] in ("done", "pending", "held")
+    m = analyst().get("/analyst/metrics").json()
+    assert (m["safe_refused"], m["safe_refused_amount"], m["safe_unlock_requests"], m["safe_unlock_cancelled"]) == (1, 400000, 2, 1)
+
+
+def test_safe_lock_and_open_in_branch():
+    c = client(STUDENT)
+    free = account(c, STUDENT)["available"]
+    assert c.post("/safe/lock", json={"amount": free + 1}).status_code == 400
+    assert c.post("/safe/lock", json={"amount": 100000}).json()["amount"] == 100000
+    assert account(c, STUDENT)["available"] == free - 100000
+    assert c.post("/safe/unlock", json={"amount": 200000, "way": "branch"}).status_code == 400
+    assert c.post("/safe/unlock", json={"amount": 100000, "way": "teleport"}).status_code == 400
+    assert c.post("/safe/unlock", json={"amount": 100000, "way": "branch"}).json()["amount"] == 0
+    assert account(c, STUDENT)["available"] == free
+    assert client(STUDENT).post("/safe/lock", json={"amount": 0}).status_code in (400, 422)
+
+
+def test_safe_texts_in_kazakh():
+    mom = client(MOM)
+    mom.cookies.set("ca_lang", "kk")
+    r = send(mom, SELLER, 400000)
+    assert r.status_code == 400 and "сейфте жатыр" in r.json()["detail"]
+
+
+# ---------- «Касса онлайн-казино» ----------
+
+SAMAT = 1021
+
+
+def test_casino_desk_is_warned_and_its_payout_is_held():
+    samat = client(SAMAT)
+    acc = account(samat, SAMAT)
+    assert (acc["casino"]["payers"], acc["casino"]["payees"], acc["casino"]["twoway"]) == (20, 7, 7)
+    assert acc["recruit"] is None                     # точнее подходит предупреждение о кассе казино
+    r = send(samat, VICTIM, 25000).json()
+    assert r["status"] == "held" and r["kind"] == "casino"
+    assert "casino_payout" in {x["code"] for x in r["reasons"]}
+    an = analyst()
+    card = an.get(f"/analyst/cases/{r['case_id']}").json()
+    assert card["casino"]["twoway"] == 7 and len(card["casino"]["factors"]) == 4
+    assert an.get("/analyst/metrics").json()["casino_stops"] == 1
+
+
+def test_casino_rule_needs_money_both_ways():
+    # Деньги от двух десятков незнакомцев и выплаты семерым новым людям, но ни один из получателей сам не платил:
+    # так работает перекупщик (покупает у одних, продаёт другим), это не касса казино.
+    now = main._now()
+    main.conn.execute("UPDATE transfers SET receiver_id = receiver_id + 30 WHERE sender_id=? AND scenario='demo_out'", (SAMAT,))
+    assert engine.casino_signal(main.conn, SAMAT, now) is None
+    # Сбор денег на поездку, оплаченный турагентству (ИП), — не «сбор» дроппера; та же сумма частному лицу — «сбор».
+    pooled = sum(r[0] for r in main.conn.execute(
+        "SELECT amount FROM transfers WHERE receiver_id=? AND scenario='demo_in'", (SAMAT,)))
+    to_ip = engine.evaluate(main.conn, SAMAT, RENTED_IP, pooled, now)
+    to_person = engine.evaluate(main.conn, SAMAT, VICTIM, pooled, now)
+    assert "pooled_forward" not in {x["code"] for x in to_ip["reasons"]}
+    assert "pooled_forward" in {x["code"] for x in to_person["reasons"]}
+
+
+def test_casino_texts_in_kazakh():
+    samat = client(SAMAT)
+    samat.cookies.set("ca_lang", "kk")
+    r = send(samat, VICTIM, 25000).json()
+    assert any(x["text"].startswith("Шот ондаған бейтаныс") for x in r["reasons"])
+
+
+def test_casino_rule_on_synthetic_accounts():
+    from app import quality
+    flags = quality.casino_flags(main.conn, STATS["cs_labels"], STATS["now"])
+    for cid, flagged in flags.items():
+        assert flagged == (STATS["cs_labels"][cid] == "casino"), STATS["cs_labels"][cid]
+    by = {}
+    for scen, held, _ in STATS["cs_scored"]:
+        by.setdefault(scen, []).append(held)
+    for honest in ("cso_supplier", "cso_agency", "cso_worker"):
+        assert by[honest] and not any(by[honest]), honest
+    assert sum(by["cso_payout"]) / len(by["cso_payout"]) >= 0.4
+
+
+# ---------- Дроп-фермы и сети дропперов ----------
+
+def test_drop_farm_is_found_and_family_tablet_is_not():
+    farms = {f["device_id"]: f for f in engine.farm_devices(main.conn, main._now())}
+    assert set(farms) >= {"drop-3f9c", "drop-81ad"} and "family-tablet" not in farms
+    assert set(farms["drop-81ad"]["accounts"]) == {SAMAT, SAFE_ACCOUNT, 292, 295}
+    # Синтетика: семьи и общежития не отмечаются, фермы — в основном отмечаются.
+    from app import quality
+    marks = quality.farm_flags(main.conn, STATS["device_labels"], STATS["now"])
+    assert not any(f for label, f in marks if label != "farm")
+    farm = [f for label, f in marks if label == "farm"]
+    assert sum(farm) / len(farm) >= 0.5
+
+
+def test_network_tab_shows_farms_and_suspends_accounts_on_drop_phones():
+    an = analyst()
+    nets = an.get("/analyst/networks").json()
+    net = next(n for n in nets if len(n["farms"]) == 2)
+    assert net["to_suspend"] >= 6 and net["inflow"] > 0
+    full = an.get(f"/analyst/networks/{net['key']}").json()
+    ids = {m["id"] for m in full["members"]}
+    assert {DROP_CARD, CARD_GIVER, RENTED_IP, SAMAT, SAFE_ACCOUNT} <= ids and MOM not in ids and STUDENT not in ids
+    nodes = {n["id"]: n for n in full["graph"]["nodes"]}
+    assert nodes["phone-1"]["kind"] == "device" and nodes[SAMAT]["tag"].startswith("телефон")
+    assert any(e["status"] == "device" and e["to"] == SAMAT for e in full["graph"]["edges"])
+    # Приостановка: только счета на дроп-телефонах; второй раз — нечего приостанавливать.
+    assert client(STUDENT).post(f"/analyst/networks/{net['key']}/suspend").status_code == 401
+    r = an.post(f"/analyst/networks/{net['key']}/suspend").json()
+    assert r["suspended"] == net["to_suspend"] and r["to_suspend"] == 0
+    assert an.post(f"/analyst/networks/{net['key']}/suspend").status_code == 409
+    timur = client(CARD_GIVER)
+    assert account(timur, CARD_GIVER)["status"] == "blocked"
+    assert timur.get(f"/clients/{CARD_GIVER}/case").json()["summary"].startswith("В ваш счёт входили с телефона")
+    case_id = next(m["case_id"] for m in an.get(f"/analyst/networks/{net['key']}").json()["members"] if m["id"] == CARD_GIVER)
+    card = an.get(f"/analyst/cases/{case_id}").json()
+    assert card["reasons"][0]["code"] == "network" and card["network"]["key"] == net["key"]
+    m = an.get("/analyst/metrics").json()
+    assert m["networks"] == len(nets) and m["network_farms"] >= 2
+    assert an.get("/analyst/networks/n0").status_code == 404
+
+
+def test_network_report_and_device_in_case_report():
+    an = analyst()
+    key = next(n["key"] for n in an.get("/analyst/networks").json() if n["farms"])
+    r = an.post(f"/analyst/networks/{key}/report")
+    assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
+    rep = r.json()
+    assert {d["model"] for d in rep["devices"]} >= {"Samsung Galaxy A15", "Redmi 13C"}
+    assert any(a["id"] == SAMAT for a in rep["accounts"])
+    assert main.conn.execute("SELECT COUNT(*) FROM events WHERE action='network_report'").fetchone()[0] == 1
+    # В выгрузке по случаю теперь есть устройства входа клиента.
+    samat = client(SAMAT)
+    case_id = send(samat, VICTIM, 25000).json()["case_id"]
+    rep = an.post(f"/analyst/cases/{case_id}/report").json()
+    assert {d["device_id"] for d in rep["technical"]["devices"]} == {f"own-{SAMAT}", "drop-81ad"}
+
+
+def test_network_suspension_text_in_kazakh():
+    an = analyst()
+    key = next(n["key"] for n in an.get("/analyst/networks").json() if n["farms"])
+    an.post(f"/analyst/networks/{key}/suspend")
+    timur = client(CARD_GIVER)
+    timur.cookies.set("ca_lang", "kk")
+    assert timur.get(f"/clients/{CARD_GIVER}/case").json()["summary"].startswith("Сіздің шотыңызға бірнеше")

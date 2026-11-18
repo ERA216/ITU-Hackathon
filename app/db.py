@@ -142,6 +142,23 @@ CREATE TABLE IF NOT EXISTS interbank (
     answered_at TEXT,
     note TEXT
 );
+CREATE TABLE IF NOT EXISTS safes (
+    client_id INTEGER PRIMARY KEY REFERENCES clients(id),  -- «Сейф»: деньги, которые нельзя перевести через приложение
+    amount INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT NOT NULL,
+    unlock_amount INTEGER,              -- клиент попросил открыть сейф: сколько
+    unlock_at TEXT,                     -- когда эти деньги станут доступны (через сутки)
+    unlock_requested_at TEXT
+);
+CREATE TABLE IF NOT EXISTS devices (
+    device_id TEXT NOT NULL,            -- устройство, с которого входили в приложение (в демо — синтетика)
+    client_id INTEGER NOT NULL REFERENCES clients(id),
+    model TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    PRIMARY KEY (device_id, client_id)
+);
+CREATE INDEX IF NOT EXISTS ix_devices_client ON devices(client_id);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -159,7 +176,7 @@ CREATE TABLE IF NOT EXISTS documents (
 """
 
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 def connect(path: str | None = None) -> sqlite3.Connection:

@@ -260,7 +260,9 @@
         <div id="coolAlerts"></div>
         <div id="loanCard"></div>
         <div id="rentalCard"></div>
+        <div id="casinoCard"></div>
         <div id="guardAlerts"></div>
+        <div id="guardSafe"></div>
         <div id="alerts"></div>
         <div id="compCards"></div>
         <div class="card cert" id="certCard" hidden></div>
@@ -287,6 +289,7 @@
 
       <section data-pane="safe" hidden>
         <div class="pane-title" data-t="tabSafe"></div>
+        <div class="card" id="safeCard"></div>
         <div class="card" id="msgCard">
           <h2 data-t="msgH"></h2>
           <label for="msgText" data-t="msgLabel" style="margin-top:0"></label>
@@ -352,8 +355,8 @@ const T = {
               'Айданаға 150 000 ₸ жіберді. Операцияларда осы аударымның астындағы «Бұл алаяқтар ма еді?» түймесін басуға болады.'],
   hint_1003: ['Карта дроппера, счёту 6 дней. После жалобы Гульнар счёт приостанавливается целиком.',
               'Дроппердің картасы, шотқа 6 күн. Гүлнардың шағымынан кейін шот толық тоқтатылады.'],
-  hint_1004: ['Айдана — её доверенное лицо. Включите сигнал звонка ниже и переведите деньги на «Безопасный счёт». Или переведите новому получателю 120 000 ₸: перевод уйдёт через час.',
-              'Айдана — оның сенімді адамы. Төмендегі қоңырау сигналын қосып, «Қауіпсіз шотқа» ақша аударыңыз. Немесе жаңа алушыға 120 000 ₸ аударыңыз: аударым бір сағаттан кейін кетеді.'],
+  hint_1004: ['Айдана — её доверенное лицо. Включите сигнал звонка ниже и переведите деньги на «Безопасный счёт». Или переведите новому получателю 120 000 ₸: перевод уйдёт через час. Сбережения 1 500 000 ₸ лежат в «Сейфе» (вкладка «Защита»): попробуйте перевести 1 000 000 ₸.',
+              'Айдана — оның сенімді адамы. Төмендегі қоңырау сигналын қосып, «Қауіпсіз шотқа» ақша аударыңыз. Немесе жаңа алушыға 120 000 ₸ аударыңыз: аударым бір сағаттан кейін кетеді. 1 500 000 ₸ жинақ «Сейфте» жатыр («Қорғау» бөлімі): 1 000 000 ₸ аударып көріңіз.'],
   hint_1005: ['Переслал 195 000 ₸ «по ошибке» на чужую карту. Сначала войдите как Гульнар и пожалуйтесь, потом вернитесь сюда: заморожена только спорная сумма.',
               '195 000 ₸ «қателесіп» бөтен картаға жіберді. Алдымен Гүлнар ретінде кіріп шағым беріңіз, сосын осында оралыңыз: тек даулы сома бұғатталған.'],
   hint_1006: ['Купила телефон у Данияра и попала на мошенников. В операциях нажмите «Это были мошенники?» у перевода 200 000 ₸.',
@@ -382,6 +385,8 @@ const T = {
               '88 000 ₸ «қателесіп» басқа банктегі картаға жіберді. Алдымен Сәуле ретінде кіріп шағым беріңіз; «Б» Банкінің жауабын қызметкер «Басқа банктер» бөлімінде имитациялайды.'],
   hint_1020: ['Получила 140 000 ₸ из другого банка и переслала их на «Карту для возврата». Во вкладке «Другие банки» сотрудник имитирует запрос Банка «Б»: система сама пройдёт цепочку в нашем банке и ответит.',
               'Басқа банктен 140 000 ₸ алып, оны «қайтаруға арналған картаға» жіберді. «Басқа банктер» бөлімінде қызметкер «Б» Банкінің сұранысын имитациялайды: жүйе біздің банктегі тізбекті өзі тексеріп, жауап береді.'],
+  hint_1021: ['Согласился «принимать платежи» за 3%: за четыре дня 20 незнакомых людей прислали мелкие суммы, семерым из них ушли «выигрыши». На главной — предупреждение. Переведите 25 000 ₸ Гульнар — выплата остановится. У сотрудника — во вкладке «Сети».',
+              '3%-ға «төлем қабылдауға» келісті: төрт күнде 20 бейтаныс адам шағын сомалар жіберді, олардың жетеуіне «ұтыс» кетті. Басты бетте — ескерту. Гүлнарға 25 000 ₸ аударыңыз — төлем тоқтайды. Қызметкерде — «Желілер» бөлімінде.'],
   who: ['Войти как', 'Кім ретінде кіру'],
   analystLink: ['Панель аналитика банка', 'Банк талдаушысының панелі'],
   available: ['Доступно', 'Қолжетімді'],
@@ -573,6 +578,29 @@ const T = {
   rentalReport: ['Сообщить банку', 'Банкке хабарлау'],
   stopTextRental: ['Похоже, счётом ИП пользуется другой человек: за неделю на него заплатили много незнакомых людей, и деньги сразу уходят на карты частных лиц. Так работает «аренда ИП». Банк остановил перевод.',
                    'ЖК шотын басқа адам пайдаланып жүрген сияқты: бір аптада оған көптеген бейтаныс адамдар төледі, ал ақша бірден жеке тұлғалардың картасына кетіп жатыр. «ЖК-ны жалға беру» осылай жұмыс істейді. Банк аударымды тоқтатты.'],
+  casinoH: ['Похоже, через вашу карту принимают платежи онлайн-казино', 'Картаңыз арқылы онлайн-казино төлемдері қабылданатын сияқты'],
+  casinoText: ['За неделю {n} незнакомых людей прислали вам {m} небольшими суммами, а деньги ушли {k} новым получателям, и {w} из них сначала сами платили вам.',
+               'Бір аптада {n} бейтаныс адам сізге шағын сомалармен {m} жіберді, ал ақша {k} жаңа алушыға кетті, олардың {w}-і алдымен өзі сізге төлеген.'],
+  casinoScheme: ['Если вам предложили «принимать платежи» за процент, это касса нелегального онлайн-казино: ставки игроков приходят на вашу карту, выигрыши уходят другим игрокам. Онлайн-казино в Казахстане запрещены, такие карты блокируют, а владельцев привлекают к ответственности. Откажитесь и сообщите банку.',
+                 'Сізге пайызға «төлем қабылдауды» ұсынса, бұл заңсыз онлайн-казиноның кассасы: ойыншылардың ставкалары картаңызға түседі, ұтыстар басқа ойыншыларға кетеді. Қазақстанда онлайн-казино тыйым салынған, мұндай карталар бұғатталады, ал иелері жауапкершілікке тартылады. Бас тартып, банкке хабарлаңыз.'],
+  stopTextCasino: ['Через вашу карту за неделю прошли деньги десятков незнакомых людей, и теперь вы переводите их ещё одному новому человеку. Так работает касса онлайн-казино. Банк остановил перевод.',
+                   'Бір аптада картаңыз арқылы ондаған бейтаныс адамның ақшасы өтті, енді сіз оны тағы бір жаңа адамға аударып жатырсыз. Онлайн-казино кассасы осылай жұмыс істейді. Банк аударымды тоқтатты.'],
+  safeLine: ['В сейфе: {m}.', 'Сейфте: {m}.'],
+  safeH: ['Сейф для сбережений', 'Жинаққа арналған сейф'],
+  safeAbout: ['Деньги в сейфе нельзя перевести или снять через приложение, даже если вас уговорят по телефону. Открыть сейф можно в отделении по удостоверению или через сутки; ваше доверенное лицо узнает об этом и сможет отменить.',
+              'Сейфтегі ақшаны қосымша арқылы аударуға не алуға болмайды, тіпті сізді телефонмен көндірсе де. Сейфті бөлімшеде жеке куәлік арқылы немесе бір тәуліктен кейін ашуға болады; сенімді адамыңыз бұл туралы біліп, болдырмай алады.'],
+  safeNow: ['Сейчас в сейфе: {m}', 'Қазір сейфте: {m}'],
+  safeLock: ['Положить в сейф', 'Сейфке салу'],
+  safeDelay: ['Открыть через сутки', 'Бір тәуліктен кейін ашу'],
+  safeBranch: ['Демо: открыть в отделении по удостоверению', 'Демо: бөлімшеде жеке куәлік арқылы ашу'],
+  safeWait: ['{m} станут доступны {t}. Если вас торопят, звонят от имени банка или полиции, оставьте деньги в сейфе.',
+             '{m} {t} қолжетімді болады. Сізді асықтырса, банк не полиция атынан қоңырау шалса, ақшаны сейфте қалдырыңыз.'],
+  safeKeep: ['Оставить в сейфе', 'Сейфте қалдыру'],
+  guardSafeH: ['{w} открывает сейф', '{w} сейфті ашып жатыр'],
+  guardSafeText: ['{m} станут доступны для переводов {t}. Позвоните и спросите, кто просит деньги. Если это похоже на мошенников, отмените.',
+                  '{m} {t} аударымға қолжетімді болады. Қоңырау шалып, ақшаны кім сұрап жатқанын біліңіз. Алаяқтарға ұқсаса, болдырмаңыз.'],
+  guardSafeCancel: ['Оставить деньги в сейфе', 'Ақшаны сейфте қалдыру'],
+  guardSafeOk: ['Сейф останется закрытым.', 'Сейф жабық қалады.'],
   coolH: ['Перевод уйдёт в {t}', 'Аударым {t} кетеді'],
   coolText: ['{m}, получатель: {r}. Крупный первый перевод новому получателю мы придерживаем на час. Если вас торопят, звонят от имени банка или полиции или просят никому не говорить, отмените его.',
              '{m}, алушы: {r}. Жаңа алушыға алғашқы ірі аударымды бір сағатқа ұстап тұрамыз. Сізді асықтырса, банк не полиция атынан қоңырау шалса немесе ешкімге айтпауды сұраса, оны болдырмаңыз.'],
@@ -646,7 +674,16 @@ function note(text, kind) {
   if (text) noteTimer = setTimeout(() => { $('note').innerHTML = ''; }, kind === 'err' ? 9000 : 6000);
 }
 $('note').onclick = () => note('');
-const when = s => new Date(s).toLocaleString(L === 'kk' ? 'kk-KZ' : 'ru-RU', {day:'numeric', month:'long', hour:'2-digit', minute:'2-digit'});
+// Казахские названия месяцев свои: в части браузеров нет данных для kk-KZ, и дата выходит как «M11 19».
+const KK_MONTHS = ['қаңтар', 'ақпан', 'наурыз', 'сәуір', 'мамыр', 'маусым', 'шілде', 'тамыз', 'қыркүйек', 'қазан', 'қараша', 'желтоқсан'];
+function dateText(s, time = true) {
+  const d = new Date(s);
+  if (L !== 'kk') return time ? d.toLocaleString('ru-RU', {day:'numeric', month:'long', hour:'2-digit', minute:'2-digit'})
+                              : d.toLocaleDateString('ru-RU', {day:'numeric', month:'long'});
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  return `${d.getDate()} ${KK_MONTHS[d.getMonth()]}` + (time ? `, ${hm}` : '');
+}
+const when = s => dateText(s);
 const ARROW_IN = '<svg class="i" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></svg>';
 const ARROW_OUT = '<svg class="i" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m6 11 6-6 6 6"/></svg>';
 
@@ -695,7 +732,7 @@ async function loadBlock() {
     <p>${esc(appeal.summary)}</p>
     <details><summary>${tr('whatNoticed')}</summary><ul>${appeal.reasons.map(r => `<li>${esc(r.text)}</li>`).join('')}</ul></details>`;
   if (appeal.status === 'under_review' && appeal.due_at) {
-    const d = new Date(appeal.due_at).toLocaleDateString(L === 'kk' ? 'kk-KZ' : 'ru-RU', {day:'numeric', month:'long'});
+    const d = dateText(appeal.due_at, false);
     html += `<p><b>${esc(tr('due', {d}))}</b> ${tr('dueMore')}</p>`;
   }
   if (appeal.refundable) html += `<div class="refund">${esc(tr('refundHint', {m: money(appeal.refundable)}))}
@@ -763,7 +800,10 @@ async function load() {
   catch (e) { if (e.status !== 401 && e.status !== 403) throw e; await loginAs(me); c = await api('/clients/' + me); }
   serverNow = c.now;
   $('balance').textContent = money(c.available);
-  $('heldLine').textContent = [c.held ? tr('heldLine', {m: money(c.held)}) : '', c.frozen ? tr('frozenLine', {m: money(c.frozen)}) : ''].filter(Boolean).join(' ');
+  $('heldLine').textContent = [c.held ? tr('heldLine', {m: money(c.held)}) : '', c.frozen ? tr('frozenLine', {m: money(c.frozen)}) : '',
+    c.safe && c.safe.amount ? tr('safeLine', {m: money(c.safe.amount)}) : ''].filter(Boolean).join(' ');
+  renderSafe(c.safe, c.status);
+  renderGuardSafe(c.guardian_safe || []);
   $('bizLine').textContent = c.kind === 'ip' ? tr('bizLine', {a: c.activity || ''}) : '';
   renderCall(c.call);
   // blocked: счёт закрыт целиком. limited: заморожена только спорная сумма, переводы знакомым работают.
@@ -784,6 +824,7 @@ async function load() {
   renderCooling(c.cooling || [], c.guardian_cooling || []);
   renderLoan(c.loan);
   renderRental(c.rental);
+  renderCasino(c.casino);
   loadGuardian();
   const chosen = $('to').value;
   $('to').innerHTML = people.filter(p => p.id !== me).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
@@ -882,7 +923,7 @@ function renderSelf(rep, status) {
   let html = `<h2>${tr('srH')}</h2>`;
   if (selfMsg) html += `<div class="note ok" style="margin:0 0 12px">${esc(selfMsg)}</div>`;
   if (rep) {
-    const d = new Date(rep.at).toLocaleString(L === 'kk' ? 'kk-KZ' : 'ru-RU', {day:'numeric', month:'long', hour:'2-digit', minute:'2-digit'});
+    const d = dateText(rep.at);
     html += `<p><b>${esc(tr('srDoneH', {d}))}</b></p><p class="muted">${esc(tr('srDoneText', {n: rep.number}))}</p>
       <a class="btn" href="/clients/${me}/self-report" target="_blank" rel="noopener">${tr('srDocOpen')}</a>`;
   }
@@ -960,7 +1001,7 @@ async function loadGuardian() {
   if (g.guardian) {
     html += `<p><b>${esc(tr('guardianNow', {g: g.guardian.name}))}</b></p>`;
     if (g.guardian.remove_at) {
-      const d = new Date(g.guardian.remove_at).toLocaleString(L === 'kk' ? 'kk-KZ' : 'ru-RU', {day:'numeric', month:'long', hour:'2-digit', minute:'2-digit'});
+      const d = dateText(g.guardian.remove_at);
       html += `<div class="note err">${esc(tr('guardianRemoving', {d}))}</div><button class="primary" id="gKeep">${tr('guardianKeep')}</button>`;
     } else html += `<button class="ghost" id="gRemove">${tr('guardianRemove')}</button>`;
   } else if (g.candidates.length) {
@@ -1016,6 +1057,66 @@ function renderLoan(loan) {
       <p style="font-size:14px">${tr('loanTerms')}</p>
     </div>` : '';
   if (loan) $('loanRepay').onclick = () => { $('loanRepay').disabled = true; repayLoan(loan.id); };
+}
+
+// «Сейф»: сбережения, которые нельзя перевести через приложение. Открыть — в отделении или через сутки.
+let safeKey = '';
+function renderSafe(safe, status) {
+  const key = JSON.stringify([me, L, safe, status]);
+  if (key === safeKey) return;                 // поле суммы не сбрасывается, пока клиент его заполняет
+  safeKey = key;
+  const box = $('safeCard');
+  if (!safe || status === 'blocked') { box.hidden = true; return; }
+  box.hidden = false;
+  let html = `<h2>${tr('safeH')}</h2><p class="muted">${tr('safeAbout')}</p>
+    <p><b>${esc(tr('safeNow', {m: money(safe.amount)}))}</b></p>`;
+  if (safe.unlock_at)
+    html += `<div class="note err">${esc(tr('safeWait', {m: money(safe.unlock_amount), t: when(safe.unlock_at)}))}</div>
+      <button class="primary" id="safeKeep">${tr('safeKeep')}</button>`;
+  html += `<label for="safeAmount">${tr('amount')}</label><input id="safeAmount" type="number" min="1" step="1" inputmode="numeric" placeholder="0">
+    <button class="primary" id="safeLock">${tr('safeLock')}</button>`;
+  if (safe.amount && !safe.unlock_at)
+    html += `<button class="soft" id="safeDelay" style="margin-top:8px">${tr('safeDelay')}</button>
+      <button class="ghost" id="safeBranch">${tr('safeBranch')}</button>`;
+  html += '<div id="safeNote"></div>';
+  box.innerHTML = html;
+  const act = (id, path, body) => { if ($(id)) $(id).onclick = async () => {
+    const amount = Math.floor(+$('safeAmount').value || 0);
+    try { await api(path, body ? body(amount) : {}); $('safeNote').innerHTML = ''; safeKey = ''; await load(); }
+    catch (e) { $('safeNote').innerHTML = `<div class="note err">${esc(e.message)}</div>`; }
+  }; };
+  act('safeLock', '/safe/lock', amount => ({amount}));
+  act('safeDelay', '/safe/unlock', amount => ({amount: amount || safe.amount, way: 'delay'}));
+  act('safeBranch', '/safe/unlock', amount => ({amount: amount || safe.amount, way: 'branch'}));
+  act('safeKeep', '/safe/keep');
+}
+// «Касса онлайн-казино»: ставки десятков незнакомцев приходят на карту, выигрыши уходят другим.
+function renderCasino(r) {
+  $('casinoCard').innerHTML = r ? `
+    <div class="alert recruit">
+      <h2>${tr('casinoH')}</h2>
+      <p>${esc(tr('casinoText', {n: r.payers, m: money(r.inflow), k: r.payees, w: r.twoway}))}</p>
+      <p>${tr('casinoScheme')}</p>
+      <div class="actions"><button class="primary" id="casinoReport">${tr('rentalReport')}</button></div>
+    </div>` : '';
+  if (r) $('casinoReport').onclick = () => {
+    showTab('safe', 'selfCard');
+    if ($('srOpen') && !$('srOpen').hidden) $('srOpen').click();
+  };
+}
+// Доверенное лицо: близкий человек попросил открыть сейф.
+function renderGuardSafe(items) {
+  $('guardSafe').innerHTML = items.map(g => `
+    <div class="alert guard">
+      <h2>${esc(tr('guardSafeH', {w: g.ward}))}</h2>
+      <p>${esc(tr('guardSafeText', {m: money(g.amount), t: when(g.unlock_at)}))}</p>
+      <div class="actions"><button class="primary" data-gsafe="${g.ward_id}">${tr('guardSafeCancel')}</button></div>
+    </div>`).join('');
+  $('guardSafe').querySelectorAll('[data-gsafe]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await api(`/guardian/safe/${b.dataset.gsafe}/cancel`, {}); note(tr('guardSafeOk'), 'ok'); } catch (e) { note(e.message, 'err'); }
+    load();
+  });
 }
 
 // «Аренда ИП»: деньги многих незнакомых людей сразу уходят на карты частных лиц.
@@ -1079,9 +1180,9 @@ function askReport(btn) {
 function showStop(r) {
   held = r;
   // Текст окна зависит от причины: чужие деньги, звонок мошенника или подозрительный получатель.
-  $('stopText').textContent = tr({scheme: 'stopText', call: 'stopTextCall', grey: 'stopTextGrey', message: 'stopTextMessage', loan: 'stopTextLoan', rental: 'stopTextRental', dictation: 'stopTextDictation'}[r.kind] || 'stopText');
+  $('stopText').textContent = tr({scheme: 'stopText', call: 'stopTextCall', grey: 'stopTextGrey', message: 'stopTextMessage', loan: 'stopTextLoan', rental: 'stopTextRental', dictation: 'stopTextDictation', casino: 'stopTextCasino'}[r.kind] || 'stopText');
   $('reasons').innerHTML = r.reasons.map(x => `<li>${esc(x.text)}</li>`).join('');
-  $('law').hidden = r.kind !== 'scheme' && r.kind !== 'rental';
+  $('law').hidden = !['scheme', 'rental', 'casino'].includes(r.kind);
   $('repayLoan').hidden = !r.loan;
   if (r.loan) $('repayLoan').textContent = tr('loanRepay', {m: money(r.loan.amount)});
   $('ret').hidden = !r.safe_return;
@@ -1157,6 +1258,7 @@ function clearScreen() {
   $('feed').innerHTML = ''; $('balance').textContent = '…'; $('heldLine').textContent = '';
   $('recipientNote').innerHTML = ''; $('callAlert').innerHTML = '';
   $('guardAlerts').innerHTML = ''; $('guardianCard').innerHTML = ''; $('certCard').hidden = true;
+  $('guardSafe').innerHTML = ''; $('safeCard').innerHTML = ''; safeKey = ''; $('casinoCard').innerHTML = '';
   $('coolAlerts').innerHTML = ''; $('loanCard').innerHTML = ''; $('rentalCard').innerHTML = ''; $('bizLine').textContent = ''; $('msgText').value = ''; $('msgResult').innerHTML = ''; clearTimeout(coolTimer);
   $('compCards').innerHTML = ''; $('selfCard').hidden = true; selfKey = ''; selfMsg = '';
   document.querySelectorAll('[data-sess]').forEach(b => { b.checked = false; });

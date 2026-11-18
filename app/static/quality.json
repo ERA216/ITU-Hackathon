@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-18T14:10:47",
+ "generated_at": "2026-11-18T20:03:53",
  "seeds": 10,
  "threshold": 85,
  "transfers_per_seed": 6026,
@@ -416,5 +416,123 @@
     "amount_stopped": 0
    }
   ]
- }
+ },
+ "casino": {
+  "accounts": [
+   {
+    "key": "casino",
+    "group": "Касса казино",
+    "title": "Ставки игроков приходят, выигрыши уходят другим игрокам",
+    "total": 60,
+    "flagged": 60
+   },
+   {
+    "key": "seller",
+    "group": "Честный",
+    "title": "Продавец: много покупателей, платит поставщикам",
+    "total": 80,
+    "flagged": 0
+   },
+   {
+    "key": "collector",
+    "group": "Честный",
+    "title": "Сбор денег на поездку: всё уходит турагентству",
+    "total": 60,
+    "flagged": 0
+   },
+   {
+    "key": "brigadier",
+    "group": "Честный",
+    "title": "Бригадир: платит многим рабочим, получает от двух заказчиков",
+    "total": 50,
+    "flagged": 0
+   },
+   {
+    "key": "reseller",
+    "group": "Честный",
+    "title": "Перекупщик билетов: покупает у одних, продаёт другим",
+    "total": 40,
+    "flagged": 0
+   }
+  ],
+  "payments": [
+   {
+    "key": "cso_payout",
+    "group": "Касса казино",
+    "title": "Выплата выигрыша игроку",
+    "total": 807,
+    "stopped": 405,
+    "amount": 33932000,
+    "amount_stopped": 19409000
+   },
+   {
+    "key": "cso_forward",
+    "group": "Касса казино",
+    "title": "Перевод организатору",
+    "total": 195,
+    "stopped": 144,
+    "amount": 18590000,
+    "amount_stopped": 13790000
+   },
+   {
+    "key": "cso_supplier",
+    "group": "Честный",
+    "title": "Продавец: оплата поставщику",
+    "total": 1183,
+    "stopped": 0,
+    "amount": 115950600,
+    "amount_stopped": 0
+   },
+   {
+    "key": "cso_agency",
+    "group": "Честный",
+    "title": "Сбор: оплата турагентству",
+    "total": 60,
+    "stopped": 0,
+    "amount": 16445000,
+    "amount_stopped": 0
+   },
+   {
+    "key": "cso_worker",
+    "group": "Честный",
+    "title": "Бригадир: оплата рабочему",
+    "total": 2232,
+    "stopped": 0,
+    "amount": 99711000,
+    "amount_stopped": 0
+   },
+   {
+    "key": "cso_resell",
+    "group": "Честный",
+    "title": "Перекупщик: покупка билета у частного лица",
+    "total": 2429,
+    "stopped": 342,
+    "amount": 53727000,
+    "amount_stopped": 8112000
+   }
+  ]
+ },
+ "devices": [
+  {
+   "key": "farm",
+   "group": "Дроп-ферма",
+   "title": "Карты нескольких дропперов на одном телефоне",
+   "total": 120,
+   "flagged": 88
+  },
+  {
+   "key": "family",
+   "group": "Честный",
+   "title": "Семья: 2–3 давних счёта на общем планшете",
+   "total": 200,
+   "flagged": 0
+  },
+  {
+   "key": "dorm",
+   "group": "Честный",
+   "title": "Общежитие: 3 студента с новыми счетами на одном ноутбуке",
+   "total": 40,
+   "flagged": 0
+  }
+ ]
 }

@@ -152,6 +152,146 @@ def generate_business(rng: random.Random, now: datetime, first_id: int):
     return clients, [e for e in events if e[0] <= now]
 
 
+MODELS = ["Samsung Galaxy A15", "Redmi 13C", "iPhone 13", "Samsung Galaxy A54", "Honor X8", "Tecno Spark 20", "iPhone 15"]
+DEVICE_FIRST_ID = 9001          # счета только для проверки дроп-ферм: у них нет переводов, только входы с устройств
+
+
+def synthetic_devices(conn, rng: random.Random, now: datetime) -> dict:
+    """Устройства для проверки правила «дроп-ферма». Отдельные счета, без переводов: на прежние цифры не влияют.
+
+    Фермы — 3–6 молодых дропперских счетов на одном телефоне (в трёх из двенадцати молодой только один). Семьи —
+    2–3 давних счёта на общем планшете. Общежитие — 3 студента с недавно открытыми счетами на одном ноутбуке.
+    Часть счетов уже в «сером» списке Антифрод-центра: у ферм — каждый третий, у честных — редко (ошибочные
+    сообщения банков). Возвращает {устройство: тип}.
+    """
+    ids, labels, clients, devices, grey = iter(range(DEVICE_FIRST_ID, 9999)), {}, [], [], []
+
+    def person(young: bool, kind="honest"):
+        cid = next(ids)
+        days = rng.randint(10, 85) if young else rng.randint(DAYS + 200, 2500)
+        clients.append((cid, f"{rng.choice(FIRST)} {rng.choice(LAST)}", (now - timedelta(days=days)).isoformat(), 0, kind))
+        return cid
+
+    def device(label, members):
+        did, model = f"syn-{label}-{len(labels) + 1}", rng.choice(MODELS)
+        labels[did] = label
+        for m in members:
+            devices.append((did, m, model, (now - timedelta(days=rng.randint(5, 60))).isoformat(), now.isoformat()))
+            if rng.random() < (0.33 if label == "farm" else 0.03):
+                grey.append((m, "grey", (now - timedelta(days=rng.randint(1, 30))).isoformat(), "Сообщения банков"))
+
+    for _ in range(12):     # фермы: в основном молодые счета, в трёх из двенадцати молодой только один
+        k = rng.randint(3, 6)
+        young = k if len(labels) % 4 else 1
+        device("farm", [person(i < young, "dropper") for i in range(k)])
+    for _ in range(20):     # семьи
+        device("family", [person(False) for _ in range(rng.choice([2, 2, 3]))])
+    for _ in range(4):      # общежитие
+        device("dorm", [person(True) for _ in range(3)])
+    conn.executemany("INSERT INTO clients(id,name,account_opened_at,balance,true_kind) VALUES(?,?,?,?,?)", clients)
+    conn.executemany("INSERT INTO devices(device_id,client_id,model,first_seen,last_seen) VALUES(?,?,?,?,?)", devices)
+    conn.executemany("INSERT INTO afc_list(client_id,list,added_at,note) VALUES(?,?,?,?)", grey)
+    return labels
+
+
+CASINO_TYPES = {"casino": 6, "seller": 8, "collector": 6, "brigadier": 5, "reseller": 4}
+CASINO_FIRST_ID = 5001          # отдельный диапазон номеров: не пересекается ни с ИП, ни с демо-персонажами
+
+
+def generate_casino(rng: random.Random, now: datetime, first_id: int = CASINO_FIRST_ID):
+    """Частные лица для проверки правила «касса онлайн-казино». Касса: ставки игроков приходят мелкими суммами,
+    выигрыши уходят другим игрокам, часть денег — организатору. Честные двойники: продавец (много покупателей,
+    платит поставщикам), сбор денег на поездку (уходит одному турагентству), бригадир (платит многим рабочим,
+    получает от немногих заказчиков) и перекупщик билетов (тоже «многие ко многим» — самый трудный случай)."""
+    start = now - timedelta(days=DAYS)
+    clients, events = [], []
+    ids = iter(range(first_id, first_id + 100_000))
+
+    def client(kind="person", opened=None, true_kind="honest", label=None):
+        cid = next(ids)
+        assert cid < DEVICE_FIRST_ID, "синтетика казино не должна выходить за свой диапазон номеров"
+        c = {"id": cid, "opened": opened or now - timedelta(days=rng.randint(DAYS + 200, 2500)), "young": False,
+             "kind": true_kind, "type": kind, "label": label, "activity": "Туристическое агентство" if kind == "ip" else None,
+             "name": f"{'ИП ' if kind == 'ip' else ''}{rng.choice(FIRST)} {rng.choice(LAST)}"}
+        clients.append(c)
+        return cid
+
+    players = [client() for _ in range(400)]
+    buyers = [client() for _ in range(200)]
+
+    def at(t0, t1):
+        return t0 + (t1 - t0) * rng.random()
+
+    for label, n in CASINO_TYPES.items():
+        for _ in range(n):
+            if label == "casino":
+                desk = client(opened=now - timedelta(days=rng.randint(20, 80)), true_kind="dropper", label=label)
+                boss = client(opened=now - timedelta(days=rng.randint(5, 40)), true_kind="dropper")
+                t0 = now - timedelta(days=rng.uniform(16, EVAL_DAYS - 12))
+                regulars, seen = rng.sample(players, rng.randint(25, 45)), []
+                for d in range(rng.randint(5, 9)):
+                    day = t0 + timedelta(days=d)
+                    bettors = rng.sample(regulars, rng.randint(3, 8))
+                    for p in bettors:
+                        events.append((at(day, day + timedelta(hours=20)), p, desk, rng.randrange(2000, 30000, 500), "cs_bet"))
+                    seen += [p for p in bettors if p not in seen]
+                    # Выигрыш получает тот, кто уже делал ставку: деньги идут в обе стороны.
+                    for p in rng.sample(seen, min(len(seen), rng.randint(1, 3))):
+                        events.append((at(day + timedelta(hours=20, minutes=30), day + timedelta(hours=23)), desk, p,
+                                       rng.randrange(5000, 80000, 1000), "cso_payout"))
+                    if d % 2 == 1:
+                        events.append((day + timedelta(hours=23, minutes=30), desk, boss, rng.randrange(40000, 150000, 5000),
+                                       "cso_forward"))
+            elif label == "seller":
+                me = client(label=label)
+                mine = [client() for _ in range(2)]
+                for s in mine:                       # поставщики знакомы с начала периода
+                    events.append((start + timedelta(hours=rng.randint(1, 48)), me, s, rng.randrange(10000, 50000, 1000), "cso_supplier"))
+                t, income = start + timedelta(days=2), 0
+                while t < now:
+                    t += timedelta(hours=rng.expovariate(rng.uniform(1.5, 4) / 24))
+                    if t >= now:
+                        break
+                    a = rng.randrange(3000, 40000, 500)
+                    events.append((t, rng.choice(buyers), me, a, "cs_sale"))
+                    income += a
+                    if income > 150000:
+                        events.append((t + timedelta(hours=rng.randint(1, 30)), me, rng.choice(mine), int(income * 0.6), "cso_supplier"))
+                        income = 0
+            elif label == "collector":
+                me = client(label=label)
+                agency = client(kind="ip")
+                t0, total = now - timedelta(days=rng.uniform(16, EVAL_DAYS - 12)), 0
+                for _ in range(rng.randint(15, 30)):
+                    a = rng.randrange(5000, 20000, 500)
+                    events.append((at(t0, t0 + timedelta(days=3)), client(), me, a, "cs_collect"))
+                    total += a
+                events.append((t0 + timedelta(days=3, hours=5), me, agency, total, "cso_agency"))
+            elif label == "brigadier":
+                me = client(label=label)
+                customers = [client() for _ in range(2)]
+                workers = [client() for _ in range(8)]
+                for w in workers:                    # постоянная бригада знакома с начала периода
+                    events.append((start + timedelta(hours=rng.randint(1, 72)), me, w, rng.randrange(20000, 60000, 1000), "cso_worker"))
+                for week in range(1, DAYS // 7):
+                    w0 = start + timedelta(days=7 * week)
+                    for c in customers:
+                        events.append((at(w0, w0 + timedelta(days=2)), c, me, rng.randrange(100000, 400000, 10000), "cs_customer"))
+                    crew = rng.sample(workers, rng.randint(5, 8)) + [client() for _ in range(rng.randint(0, 2))]
+                    for w in crew:
+                        events.append((at(w0 + timedelta(days=3), w0 + timedelta(days=6)), me, w,
+                                       rng.randrange(20000, 70000, 1000), "cso_worker"))
+            else:                                    # перекупщик билетов: покупает у одних, продаёт другим
+                me = client(label=label)
+                for week in range(4):
+                    w0 = now - timedelta(days=30 - 7 * week)
+                    for _ in range(rng.randint(10, 20)):
+                        events.append((at(w0, w0 + timedelta(days=7)), me, client(), rng.randrange(10000, 35000, 500), "cso_resell"))
+                    for _ in range(rng.randint(15, 30)):
+                        events.append((at(w0, w0 + timedelta(days=7)), client(), me, rng.randrange(15000, 40000, 500), "cs_ticket"))
+    return clients, [e for e in events if e[0] <= now]
+
+
 def generate(rng: random.Random, now: datetime, biz_seed: int | None = None):
     start = now - timedelta(days=DAYS)
     clients = []
@@ -224,8 +364,9 @@ def generate(rng: random.Random, now: datetime, biz_seed: int | None = None):
 
     if biz_seed is not None:
         biz_clients, biz_events = generate_business(random.Random(biz_seed * 7919 + 101), now, N_CLIENTS + 1)
-        clients += biz_clients
-        events += biz_events
+        cs_clients, cs_events = generate_casino(random.Random(biz_seed * 104729 + 7), now)
+        clients += biz_clients + cs_clients
+        events += biz_events + cs_events
     events.sort(key=lambda e: e[0])
     return clients, events
 
@@ -239,7 +380,7 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
     демо-серверу они не нужны, без них он запускается быстрее.
     """
     if reset:
-        for table in ("interbank", "loans", "self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
+        for table in ("devices", "safes", "interbank", "loans", "self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
             conn.execute(f"DELETE FROM {table}")
     now = (now or clock.now()).replace(microsecond=0)
     rng = random.Random(seed)
@@ -251,8 +392,14 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
 
     stats = {"tri": 0, "tri_caught": 0, "honest": 0, "honest_held": 0, "clients": len(clients), "events": len(events),
              "scored": [], "held": [], "passed": [], "ip_scored": [], "now": now,
-             "ip_labels": {c["id"]: c["label"] for c in clients if c.get("type") == "ip"}}
+             "ip_labels": {c["id"]: c["label"] for c in clients if c.get("type") == "ip" and c["id"] < CASINO_FIRST_ID},
+             "cs_labels": {c["id"]: c["label"] for c in clients if c["id"] >= CASINO_FIRST_ID and c.get("label")},
+             "cs_scored": []}
     for t, s, r, amount, scen in events:
+        if evaluate and scen.startswith("cso_") and t >= now - timedelta(days=EVAL_DAYS):
+            # Платежи кассы казино и честных двойников: что останавливает движок.
+            res = engine.evaluate(conn, s, r, amount, t)
+            stats["cs_scored"].append((scen, res["decision"] == "hold", amount))
         if evaluate and scen.startswith("ipo_") and t >= now - timedelta(days=EVAL_DAYS):
             # Платежи ИП: останавливает ли движок транзит арендованного ИП и не мешает ли честным.
             res = engine.evaluate(conn, s, r, amount, t)
@@ -280,6 +427,7 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
     if with_history:
         from . import history
         history.simulate(conn, stats, now, random.Random(seed + 1))
+    stats["device_labels"] = synthetic_devices(conn, random.Random(seed * 31 + 3), now) if with_business else {}
     _demo_personas(conn, now)
     conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('seeded_at',?)", (now.isoformat(),))
     conn.commit()
@@ -328,6 +476,7 @@ def _demo_personas(conn, now: datetime):
         (1018, "Сауле (купила билеты по объявлению)", now - timedelta(days=1500), 260000, "honest"),
         (1019, "Арман (продаёт билеты на концерты)", now - timedelta(days=900), 21000, "honest"),
         (1020, "Дина (получила перевод из другого банка)", now - timedelta(days=600), 17000, "honest"),
+        (1021, "Самат (студент, «принимает платежи» за процент)", now - timedelta(days=50), 4000, "dropper"),
     ]
     conn.executemany(
         "INSERT INTO clients(id,name,account_opened_at,balance,true_kind) VALUES(?,?,?,?,?)",
@@ -455,6 +604,32 @@ def _demo_personas(conn, now: datetime):
     tr_at(1017, 1020, 140000, t_got, "demo_in")
     tr_at(1020, 1003, 135000, t_got + timedelta(minutes=40), "demo_out")
 
+    # Самату в чате предложили «принимать платежи» за 3%: через его карту идут ставки игроков онлайн-казино
+    # (мелкие суммы от двух десятков незнакомцев) и выплаты выигрышей семерым из этих игроков.
+    for n, (pair, amount) in enumerate([((1021, 141), 3000), ((143, 1021), 5000), ((1021, 141), 2500)]):
+        tr_at(*pair, amount, now - timedelta(days=45 - 12 * n))
+    for n in range(20):
+        tr_at(200 + n, 1021, 3000 + (n * 7919) % 22 * 1000, now - timedelta(hours=90 - 4 * n), "demo_in")
+    for n, amount in enumerate([18000, 42000, 9000, 27000, 15000, 33000, 21000]):
+        tr_at(1021, (200, 203, 206, 209, 212, 214, 217)[n], amount, now - timedelta(hours=85 - 11 * n), "demo_out")
+
+    # Устройства входа в приложение. У каждого своё; у Мамы и Айданы общий семейный планшет (два давних счёта —
+    # это не ферма). Два «дроп-телефона»: на них работают карта «для возврата», «Безопасный счёт», Руслан,
+    # Тимур (отдал доступ к приложению), ИП Нурлан (сдал ИП «в аренду»), Самат (касса казино) и два дропперских
+    # счёта из синтетики. На одном телефоне больше трёх счетов разных людей — так выглядит дроп-ферма.
+    devs = []
+    for cid in list(range(1001, 1016)) + [1018, 1019, 1020, 1021]:
+        devs.append((f"own-{cid}", cid, MODELS[cid % len(MODELS)], (now - timedelta(days=300)).isoformat(),
+                     (now - timedelta(days=1)).isoformat()))
+    for cid in (1001, 1004):
+        devs.append(("family-tablet", cid, "Samsung Galaxy Tab A9", (now - timedelta(days=400)).isoformat(),
+                     (now - timedelta(days=2)).isoformat()))
+    for did, model, members in [("drop-3f9c", "Samsung Galaxy A15", (1003, 1009, 1007, 1012, 1014, 290)),
+                                ("drop-81ad", "Redmi 13C", (1021, 1009, 292, 295))]:
+        for cid in members:
+            devs.append((did, cid, model, (now - timedelta(days=5)).isoformat(), (now - timedelta(hours=2)).isoformat()))
+    conn.executemany("INSERT INTO devices(device_id,client_id,model,first_seen,last_seen) VALUES(?,?,?,?,?)", devs)
+
     # Имитация базы Антифрод-центра: «чёрный» список — подтверждённые мошенники, «серый» — подозрительные.
     conn.executemany("INSERT INTO afc_list(client_id,list,added_at,note) VALUES(?,?,?,?)", [
         (1008, "black", (now - timedelta(days=20)).isoformat(), "Лжеинвестиционная платформа, подтверждено"),
@@ -465,7 +640,11 @@ def _demo_personas(conn, now: datetime):
     conn.execute("""UPDATE clients SET balance = balance
                       + COALESCE((SELECT SUM(amount) FROM transfers WHERE receiver_id=clients.id AND status='done'), 0)
                       - COALESCE((SELECT SUM(amount) FROM transfers WHERE sender_id=clients.id AND status='done'), 0)
-                    WHERE id >= 1001""")
+                    WHERE id BETWEEN 1001 AND 1999""")
+    # У Мамы сбережения 1 500 000 ₸ лежат в «Сейфе» уже месяц: перевести их через приложение нельзя.
+    conn.execute("UPDATE clients SET balance = balance + 1500000 WHERE id=1004")
+    conn.execute("INSERT INTO safes(client_id,amount,updated_at) VALUES(1004,1500000,?)",
+                 ((now - timedelta(days=30)).isoformat(),))
     # Кредит наличными зачисляется на счёт напрямую (это деньги банка, а не перевод от клиента).
     conn.execute("INSERT INTO loans(client_id,amount,issued_at) VALUES(1013,800000,?)",
                  ((now - timedelta(minutes=40)).isoformat(),))

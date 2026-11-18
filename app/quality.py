@@ -51,6 +51,32 @@ BIZ_PAYMENTS = {
 }
 
 
+# «Касса онлайн-казино» на частных лицах.
+CASINO_ACCOUNTS = {
+    "casino": ("Касса казино", "Ставки игроков приходят, выигрыши уходят другим игрокам"),
+    "seller": ("Честный", "Продавец: много покупателей, платит поставщикам"),
+    "collector": ("Честный", "Сбор денег на поездку: всё уходит турагентству"),
+    "brigadier": ("Честный", "Бригадир: платит многим рабочим, получает от двух заказчиков"),
+    "reseller": ("Честный", "Перекупщик билетов: покупает у одних, продаёт другим"),
+}
+CASINO_PAYMENTS = {
+    "cso_payout": ("Касса казино", "Выплата выигрыша игроку"),
+    "cso_forward": ("Касса казино", "Перевод организатору"),
+    "cso_supplier": ("Честный", "Продавец: оплата поставщику"),
+    "cso_agency": ("Честный", "Сбор: оплата турагентству"),
+    "cso_worker": ("Честный", "Бригадир: оплата рабочему"),
+    "cso_resell": ("Честный", "Перекупщик: покупка билета у частного лица"),
+}
+
+
+# Устройства входа: какие из них правило «дроп-ферма» отмечает.
+DEVICES = {
+    "farm": ("Дроп-ферма", "Карты нескольких дропперов на одном телефоне"),
+    "family": ("Честный", "Семья: 2–3 давних счёта на общем планшете"),
+    "dorm": ("Честный", "Общежитие: 3 студента с новыми счетами на одном ноутбуке"),
+}
+
+
 def held(score: int, has_incoming: bool, threshold: int) -> bool:
     return has_incoming and score >= threshold
 
@@ -61,16 +87,45 @@ def business_flags(conn, labels: dict, now: datetime, days: int = seed.EVAL_DAYS
             for cid, label in labels.items() if label in BIZ_ACCOUNTS}
 
 
+def casino_flags(conn, labels: dict, now: datetime, days: int = seed.EVAL_DAYS) -> dict:
+    """Какие частные лица правила «кассы казино» отметили хотя бы раз (проверка в конце каждого дня)."""
+    return {cid: any(engine.casino_signal(conn, cid, now - timedelta(days=d)) for d in range(days))
+            for cid, label in labels.items() if label in CASINO_ACCOUNTS}
+
+
+def farm_flags(conn, labels: dict, now: datetime) -> list[tuple]:
+    """(тип устройства, отмечено ли как дроп-ферма) для синтетических устройств."""
+    found = {f["device_id"] for f in engine.farm_devices(conn, now)}
+    return [(label, did in found) for did, label in labels.items()]
+
+
+def _table(items: list, titles: dict, flagged: str | None = None) -> list[dict]:
+    """Сводка по группам: для счетов — сколько отмечено, для платежей — сколько остановлено и на какую сумму."""
+    out = []
+    for k, (g, title) in titles.items():
+        rows = [x for x in items if x[0] == k]
+        if flagged:
+            out.append({"key": k, "group": g, "title": title, "total": len(rows), "flagged": sum(1 for _, f in rows if f)})
+        else:
+            out.append({"key": k, "group": g, "title": title, "total": len(rows), "stopped": sum(1 for _, h, _ in rows if h),
+                        "amount": sum(a for _, _, a in rows), "amount_stopped": sum(a for _, h, a in rows if h)})
+    return out
+
+
 def run() -> dict:
     tmp = tempfile.mkdtemp()
-    per_seed, accounts, payments = [], [], []
+    per_seed, accounts, payments, cs_accounts, cs_payments, devices = [], [], [], [], [], []
     for s in SEEDS:
         conn, stats = seed.build(os.path.join(tmp, f"q{s}.db"), seed=s, verbose=False)
         flags = business_flags(conn, stats["ip_labels"], stats["now"])
+        cflags = casino_flags(conn, stats["cs_labels"], stats["now"])
+        devices += farm_flags(conn, stats["device_labels"], stats["now"])
         conn.close()
         per_seed.append(stats["scored"])
         accounts += [(stats["ip_labels"][cid], f) for cid, f in flags.items()]
         payments += stats["ip_scored"]
+        cs_accounts += [(stats["cs_labels"][cid], f) for cid, f in cflags.items()]
+        cs_payments += stats["cs_scored"]
 
     curve = []
     for t in THRESHOLDS:
@@ -111,6 +166,9 @@ def run() -> dict:
                           "amount_stopped": sum(a for sc, h, a in payments if sc == k and h)}
                          for k, (g, title) in BIZ_PAYMENTS.items()],
         },
+        "casino": {"accounts": _table(cs_accounts, CASINO_ACCOUNTS, flagged="flagged"),
+                   "payments": _table(cs_payments, CASINO_PAYMENTS)},
+        "devices": _table(devices, DEVICES, flagged="flagged"),
     }
 
 
@@ -133,3 +191,12 @@ if __name__ == "__main__":
     print("Аренда ИП, платежи:")
     for r in data["business"]["payments"]:
         print(f"  {r['group']:12} {r['title']}: остановлено {r['stopped']} из {r['total']}")
+    print("Касса казино, счета:")
+    for r in data["casino"]["accounts"]:
+        print(f"  {r['group']:12} {r['title']}: отмечено {r['flagged']} из {r['total']}")
+    print("Касса казино, платежи:")
+    for r in data["casino"]["payments"]:
+        print(f"  {r['group']:12} {r['title']}: остановлено {r['stopped']} из {r['total']}")
+    print("Дроп-фермы, устройства:")
+    for r in data["devices"]:
+        print(f"  {r['group']:12} {r['title']}: отмечено {r['flagged']} из {r['total']}")

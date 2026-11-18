@@ -115,7 +115,7 @@
       <button data-tab="pending" aria-selected="true">Ждут решения</button><button data-tab="all">Все</button><button data-tab="linked">Связанные счета</button>
     </div>
     <div class="tabs" role="tablist">
-      <button data-tab="business">Аренда ИП</button><button data-tab="interbank">Другие банки</button>
+      <button data-tab="business">Аренда ИП</button><button data-tab="interbank">Другие банки</button><button data-tab="networks">Сети</button>
     </div>
     <h2 id="queueTitle">Очередь</h2><div id="queue"></div>
   </div>
@@ -130,7 +130,8 @@ const KIND = {block: 'Блокировка счёта', intercept: 'Перево
 const kind = c => c.kind === 'block' && c.scope === 'partial' ? 'Заморожена спорная сумма' : KIND[c.kind];
 const GUARD = {notified: 'узнал(а) об остановке', asked: 'клиент настаивает, ждём подтверждения',
                confirmed: 'подтвердил(а) перевод, решение за сотрудником', cancelled: 'отменил(а) перевод'};
-let current = null;
+let current = null, currentNet = null;
+const plural = (n, one, few, many) => n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? few : many;
 
 async function api(path, body) {
   const r = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {});
@@ -156,6 +157,7 @@ async function loadQueue() {
   if (tab === 'linked') return loadLinked();
   if (tab === 'business') return loadBusiness();
   if (tab === 'interbank') return loadInterbank();
+  if (tab === 'networks') return loadNetworks();
   const all = await api('/analyst/cases');
   const waiting = all.filter(c => c.needs_decision);
   const q = tab === 'pending' ? waiting : all;
@@ -241,9 +243,88 @@ async function loadInterbank() {
   act('[data-ret]', b => api(`/analyst/interbank/${b.dataset.ret}/return`, {}));
   act('[data-incoming]', b => api('/analyst/interbank/incoming', {transfer_id: +b.dataset.incoming}));
 }
+// Сети дропперов: счета на общих «дроп-телефонах» и переводы между подозрительными счетами.
+async function loadNetworks() {
+  const L = await api('/analyst/networks');
+  $('queueTitle').textContent = `Сети: ${L.length}`;
+  $('queue').innerHTML = (L.length ? '<p class="muted" style="margin:0 0 8px">Счета, связанные общим телефоном или переводами между подозрительными счетами. Дроп-ферма — телефон, с которого входят в приложение несколько разных людей: их картами управляет один человек.</p>' : '') +
+    L.map(n => `<button class="item ${n.key === currentNet ? 'sel' : ''}" data-net="${esc(n.key)}">
+      <b>${n.accounts} ${plural(n.accounts, 'счёт', 'счёта', 'счетов')}${n.farms.length ? ` · ${n.farms.length} ${plural(n.farms.length, 'дроп-телефон', 'дроп-телефона', 'дроп-телефонов')}` : ''}</b>
+      <span class="muted">Центр: ${esc(n.center.name)}</span><br>
+      <span class="muted">За 90 дней пришло ${money(n.inflow)} от ${n.senders} ${plural(n.senders, 'человека', 'человек', 'человек')}</span><br>
+      ${n.to_suspend ? `<span class="pill organizer">На дроп-телефонах активны: ${n.to_suspend}</span>` : ''}
+      ${n.blocked ? `<span class="pill">Приостановлено: ${n.blocked}</span>` : ''}
+    </button>`).join('') || '<div class="card muted">Сетей не найдено.</div>';
+  $('queue').querySelectorAll('[data-net]').forEach(b => b.onclick = () => openNetwork(b.dataset.net));
+}
+function goNetwork(key) {
+  tab = 'networks';
+  document.querySelectorAll('[data-tab]').forEach(x => x.setAttribute('aria-selected', String(x.dataset.tab === tab)));
+  openNetwork(key);
+}
+function legend(extra) {
+  return `<div class="legend">
+    <span><i></i>деньги ушли</span><span><i class="wait"></i>перевод на паузе</span><span><i class="stop"></i>перевод отменён</span>
+    <span><b style="background:var(--blue-bg);border-color:var(--blue)"></b>пострадавший</span>${extra}
+    <span><b style="background:var(--warn-bg);border-color:var(--warn)"></b>счёт приостановлен</span>
+    <span><b style="background:var(--amber-bg);border-color:var(--amber)"></b>заморожена спорная сумма</span>
+    <span><b style="background:#fff;border:1px dashed var(--muted)"></b>счёт в другом банке</span></div>`;
+}
+async function openNetwork(key) {
+  currentNet = key; current = null;
+  const n = await api('/analyst/networks/' + encodeURIComponent(key));
+  const st = m => m.status === 'blocked' ? 'приостановлен' : m.status === 'limited' ? 'заморожена спорная сумма' : 'активен';
+  $('detail').innerHTML = `
+    <div class="card">
+      <h2 style="font-size:19px">Сеть: ${n.accounts} ${plural(n.accounts, 'счёт', 'счёта', 'счетов')}</h2>
+      <div class="muted">Центр сети: ${esc(n.center.name)}, связан с ${n.center.links} ${plural(n.center.links, 'счётом', 'счетами', 'счетами')} сети</div>
+      <div class="muted">За 90 дней в сеть пришло ${money(n.inflow)} от ${n.senders} ${plural(n.senders, 'человека', 'человек', 'человек')}</div>
+      <div class="muted">Это подсказка по правилам. Решение принимает сотрудник.</div>
+    </div>
+    <div class="card decision"><h2>Решение</h2>
+      ${n.to_suspend ? `<p>На дроп-телефонах сети активны ${n.to_suspend} ${plural(n.to_suspend, 'счёт', 'счёта', 'счетов')}: ими, похоже, управляет один человек.</p>
+        <div class="actions"><button class="act reject" id="netSuspend">Приостановить счета на дроп-телефонах (${n.to_suspend})</button></div>`
+        : `<p class="muted">${n.farms.length ? 'Счета на дроп-телефонах уже приостановлены или ограничены.' : 'Дроп-телефонов в этой сети нет: счета разбираются по одному, через их случаи.'}</p>`}
+      <p class="muted" style="margin:8px 0 0">Остальные счета сети, например невольных участников, сотрудник разбирает по одному: нажмите на счёт в списке или на графе.</p>
+      <div id="err"></div>
+    </div>
+    ${n.farms.map(f => `<div class="card linked"><h2>Телефон ${f.n}: ${esc(f.model)}</h2>
+      <ul>${f.factors.map(x => `<li><span>${esc(x)}</span></li>`).join('')}</ul>
+      <p class="muted" style="margin:6px 0 0">Счета: ${f.accounts.map(a => esc(a.name)).join(', ')}.</p>
+      <p class="muted" style="margin:6px 0 0">Семья на общем планшете — это 2–3 давних счёта без признаков дроппера. Здесь счета разных людей, новые или уже замеченные банком.</p></div>`).join('')}
+    ${n.graph.nodes.length ? `<div class="card"><h2>Граф: куда шли деньги</h2>
+      <p class="muted" style="margin:0 0 8px">Дроп-телефоны, переводы внутри сети за 90 дней и переводы пострадавших, которые пожаловались. Нажмите на счёт, чтобы открыть его случай.</p>
+      <div class="graph" id="graph"></div>
+      ${legend('<span><i style="border-top:2px dotted var(--warn)"></i>вход в приложение с дроп-телефона</span>')}</div>` : ''}
+    <div class="card"><h2>Счета сети</h2>
+      <ul>${n.members.map(m => `<li style="display:block"><b>${m.case_id ? `<button class="linkbtn" data-open="${m.case_id}">${esc(m.name)}</button>` : esc(m.name)}</b>
+        <span class="muted">${st(m)} · счёту ${m.age_days} дн.${m.kind === 'ip' ? ' · ИП' : ''}${m.phones.length ? ' · телефон ' + m.phones.join(', ') : ''}${m.center ? ' · центр сети' : ''}</span>
+        ${m.inflow ? `<br><span class="muted">за 90 дней пришло ${money(m.inflow)} от ${m.senders} ${plural(m.senders, 'человека', 'человек', 'человек')} вне сети</span>` : ''}
+        ${m.marks.length ? `<br><span class="muted">${m.marks.map(esc).join('; ')}</span>` : ''}</li>`).join('')}</ul></div>
+    <div class="card"><h2>Антифрод-центр и АФМ</h2>
+      <p class="muted">Сведения о сети для передачи в Антифрод-центр Нацбанка и Агентство по финансовому мониторингу: счета, телефоны, переводы. Формат условный.</p>
+      <button class="act" id="netReport" style="background:var(--line);max-width:320px">Выгрузить сведения о сети (JSON)</button>
+    </div>`;
+  if ($('graph')) drawGraph($('graph'), n.graph, null);
+  $('detail').querySelectorAll('[data-open]').forEach(b => b.onclick = () => open(+b.dataset.open));
+  if ($('netSuspend')) $('netSuspend').onclick = async () => {
+    $('netSuspend').disabled = true;
+    try { await api(`/analyst/networks/${encodeURIComponent(key)}/suspend`, {}); await openNetwork(key); }
+    catch (e) { $('err').innerHTML = `<div class="note">${esc(e.message)}</div>`; $('netSuspend').disabled = false; }
+  };
+  $('netReport').onclick = async () => {
+    const r = await fetch(`/analyst/networks/${encodeURIComponent(key)}/report`, {method: 'POST'});
+    if (!r.ok) return alertBox('Не удалось выгрузить сведения');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(await r.blob()); a.download = `network-${key}.json`; a.click();
+    URL.revokeObjectURL(a.href);
+  };
+  loadQueue();
+}
 // Граф денег: столбцы слева направо (откуда пришли деньги → куда ушли), стрелка — переводы между двумя счетами.
 function drawGraph(host, g, currentCase) {
-  const NW = 176, NH = 64, CW = 290, GY = 22, PAD = 6;
+  const tagged = g.nodes.some(n => n.tag);
+  const NW = 176, NH = tagged ? 80 : 64, CW = 290, GY = 22, PAD = 6;
   const cols = {};
   g.nodes.forEach(n => (cols[n.col] = cols[n.col] || []).push(n));
   // Порядок внутри столбца: счёт ставим напротив тех, с кем он связан, — так стрелки меньше пересекаются.
@@ -267,19 +348,22 @@ function drawGraph(host, g, currentCase) {
     arr.forEach((n, i) => { pos[n.id] = {x: PAD + c * CW, y: top + i * (NH + GY)}; });
   }
   const cut = (s, n) => s.length > n ? s.slice(0, n - 1) + '…' : s;
-  const LINE = {done: ['#587366', ''], held: ['#b07d00', '6 4'], pending: ['#b07d00', '6 4'], cancelled: ['#9fb3aa', '6 4']};
+  const LINE = {done: ['#587366', ''], held: ['#b07d00', '6 4'], pending: ['#b07d00', '6 4'], cancelled: ['#9fb3aa', '6 4'], device: ['#c62828', '2 4']};
   const NOTE = {held: 'на паузе', pending: 'уйдёт позже', cancelled: 'отменён'};
   let edges = '';
   const labels = [];
   const fanIn = {}, fanOut = {};
-  g.edges.forEach(e => { fanIn[e.to] = (fanIn[e.to] || 0) + 1; fanOut[e.from] = (fanOut[e.from] || 0) + 1; });
+  const moneyEdges = g.edges.filter(e => e.status !== 'device');
+  moneyEdges.forEach(e => { fanIn[e.to] = (fanIn[e.to] || 0) + 1; fanOut[e.from] = (fanOut[e.from] || 0) + 1; });
   for (const e of g.edges) {
     const a = pos[e.from], b = pos[e.to];
     if (!a || !b) continue;
     const [color, dash] = LINE[e.status] || LINE.done;
     const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x - 2, y2 = b.y + NH / 2, mx = (x1 + x2) / 2;
-    edges += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="2"
-      ${dash ? `stroke-dasharray="${dash}"` : ''} marker-end="url(#arr-${e.status in LINE ? e.status : 'done'})"/>`;
+    // Телефон и счёт, в который с него входят: пунктир без стрелки и подписи.
+    edges += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${color}" stroke-width="${e.status === 'device' ? 1.5 : 2}"
+      ${dash ? `stroke-dasharray="${dash}"` : ''} ${e.status === 'device' ? '' : `marker-end="url(#arr-${e.status in LINE ? e.status : 'done'})"`}/>`;
+    if (e.status === 'device') continue;
     // Подпись — там, где стрелки расходятся: у счёта, куда сходится много стрелок, — ближе к отправителю,
     // у счёта, откуда много стрелок выходит, — ближе к получателю. Так подписи не налезают друг на друга.
     const t0 = fanIn[e.to] > 1 && fanOut[e.from] <= 1 ? 0.3 : fanOut[e.from] > 1 && fanIn[e.to] <= 1 ? 0.72 : 0.45;
@@ -318,14 +402,15 @@ function drawGraph(host, g, currentCase) {
     const p = pos[n.id];
     const ext = n.kind === 'external';
     const look = n.role === 'victim' ? ['var(--blue-bg)', 'var(--blue)'] : ext ? ['#fff', 'var(--muted)']
+      : n.role === 'device' ? ['#fff', 'var(--warn)']
       : n.status === 'blocked' ? ['var(--warn-bg)', 'var(--warn)']
       : n.status === 'limited' ? ['var(--amber-bg)', 'var(--amber)'] : n.role === 'group' ? ['#fff', 'var(--line)'] : ['var(--fill)', 'var(--fill)'];
     const stroke = n.role === 'current' ? 'var(--brand)' : look[1];
     const REQ = {sent: 'Запрос отправлен', frozen: `Заморожено ${n.request ? money(n.request.frozen) : ''}`, gone: 'Деньги ушли дальше'};
-    const state = n.role === 'group' ? 'свёрнуты, чтобы граф читался'
+    const state = n.role === 'device' ? n.model : n.role === 'group' ? 'свёрнуты, чтобы граф читался'
       : n.role === 'victim' ? 'Пострадавший' : ext ? (n.request ? REQ[n.request.status] : 'Счёт в другом банке')
       : n.status === 'blocked' ? 'Счёт приостановлен' : n.status === 'limited' ? `Заморожено ${money(n.frozen)}` : 'Счёт активен';
-    const meta = n.role === 'group' ? '' : ext ? `другой банк: ${n.bank || ''}` : [n.role === 'current' ? 'этот случай' : '', `счёту ${n.age_days} дн.`, n.kind === 'ip' ? 'ИП' : '',
+    const meta = n.role === 'device' ? `входят ${n.accounts} разных людей` : n.role === 'group' ? '' : ext ? `другой банк: ${n.bank || ''}` : [n.role === 'current' ? 'этот случай' : '', `счёту ${n.age_days} дн.`, n.kind === 'ip' ? 'ИП' : '',
       n.afc === 'grey' ? 'серый список' : n.afc === 'black' ? 'чёрный список' : ''].filter(Boolean).join(' · ');
     const go = n.case_id && n.case_id !== currentCase ? `data-gopen="${n.case_id}"` : '';
     nodes += `<g class="gnode" ${go}><title>${esc(n.name)}${go ? ' — открыть случай №' + n.case_id : ''}</title>
@@ -333,18 +418,19 @@ function drawGraph(host, g, currentCase) {
         stroke-width="${n.role === 'current' ? 2.5 : 1}" ${n.role === 'group' || ext ? 'stroke-dasharray="4 3"' : ''}/>
       <text x="${p.x + 10}" y="${p.y + 20}" font-size="13" font-weight="700" fill="#1d1d1e">${esc(cut(n.name, 24))}</text>
       <text x="${p.x + 10}" y="${p.y + 37}" font-size="12" fill="${n.status === 'blocked' ? 'var(--warn)' : n.status === 'limited' ? 'var(--amber)' : '#2f4a3f'}">${esc(state)}</text>
-      <text x="${p.x + 10}" y="${p.y + 53}" font-size="11" fill="var(--muted)">${esc(cut(meta, 30))}</text></g>`;
+      <text x="${p.x + 10}" y="${p.y + 53}" font-size="11" fill="var(--muted)">${esc(cut(meta, 30))}</text>
+      ${n.tag ? `<text x="${p.x + 10}" y="${p.y + 70}" font-size="11" font-weight="600" fill="var(--warn)">${esc(cut(n.tag, 28))}</text>` : ''}</g>`;
   }
   const marker = (id, color) => `<marker id="arr-${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8"
     markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="${color}"/></marker>`;
-  host.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Граф переводов вокруг случая">
+  host.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${currentCase ? 'Граф переводов вокруг случая' : 'Граф переводов сети'}">
     <defs>${Object.entries(LINE).map(([k, v]) => marker(k, v[0])).join('')}</defs>${edges}${labelSvg}${nodes}</svg>`;
   host.querySelectorAll('[data-gopen]').forEach(n => n.addEventListener('click', () => open(+n.dataset.gopen)));
 }
 function alertBox(text) { $('detail').insertAdjacentHTML('afterbegin', `<div class="note">${esc(text)}</div>`); }
 
 async function open(id) {
-  current = id;
+  current = id; currentNet = null;
   const c = await api('/analyst/cases/' + id);
   const pts = p => `<span class="pts ${p > 0 ? 'plus' : 'minus'}">${p > 0 ? '+' : '−'}${Math.abs(p)}</span>`;
   const approve = c.kind === 'block' ? 'Снять ограничения' : 'Разрешить перевод';
@@ -382,14 +468,10 @@ async function open(id) {
     ${c.graph && c.graph.edges.length ? `<div class="card"><h2>Граф: куда шли деньги</h2>
       <p class="muted" style="margin:0 0 8px">Счета и переводы вокруг случая: цепочка по жалобе, пересылки этого клиента, другие случаи с той же картой. Нажмите на счёт, чтобы открыть его случай.</p>
       <div class="graph" id="graph"></div>
-      <div class="legend">
-        <span><i></i>деньги ушли</span><span><i class="wait"></i>перевод на паузе</span><span><i class="stop"></i>перевод отменён</span>
-        <span><b style="background:var(--blue-bg);border-color:var(--blue)"></b>пострадавший</span>
-        <span><b style="background:#fff;border:2px solid var(--brand)"></b>этот случай</span>
-        <span><b style="background:var(--warn-bg);border-color:var(--warn)"></b>счёт приостановлен</span>
-        <span><b style="background:var(--amber-bg);border-color:var(--amber)"></b>заморожена спорная сумма</span>
-        <span><b style="background:#fff;border:1px dashed var(--muted)"></b>счёт в другом банке</span>
-      </div></div>` : ''}
+      ${legend('<span><b style="background:#fff;border:2px solid var(--brand)"></b>этот случай</span>')}</div>` : ''}
+    ${c.network ? `<div class="card linked"><h2>Счёт входит в сеть дропперов</h2>
+      <p>В сети ${c.network.accounts} ${plural(c.network.accounts, 'счёт', 'счёта', 'счетов')}${c.network.farms ? `, ${c.network.farms} ${plural(c.network.farms, 'дроп-телефон', 'дроп-телефона', 'дроп-телефонов')}` : ''}: общий телефон или переводы между подозрительными счетами.</p>
+      <button class="act reject" data-net-card="${esc(c.network.key)}" style="max-width:280px">Открыть сеть</button></div>` : ''}
     <div class="card">
       <h2>Цепочка переводов</h2>
       <div class="chain">
@@ -411,6 +493,10 @@ async function open(id) {
       <ul>${c.rental.factors.map(f => `<li><span>${esc(f)}</span></li>`).join('')}</ul>
       <p class="muted" style="margin:6px 0 0">Честный магазин тоже получает деньги от незнакомцев, но платит поставщикам. Если владелец ИП передал доступ к счёту, счёт стоит приостановить целиком.</p>
       ${c.client_status !== 'blocked' && c.kind === 'intercept' ? `<button class="act reject" data-rent-card="${c.client_id}" style="max-width:280px;margin-top:10px">Приостановить счёт ИП</button>` : ''}
+    </div>` : ''}
+    ${c.casino ? `<div class="card linked"><h2>Признаки кассы онлайн-казино</h2>
+      <ul>${c.casino.factors.map(f => `<li><span>${esc(f)}</span></li>`).join('')}</ul>
+      <p class="muted" style="margin:6px 0 0">Честный продавец получает деньги от многих, но платит немногим; бригадир платит многим, но получает от немногих; перекупщик покупает у одних, а продаёт другим. Здесь одни и те же незнакомцы и платят, и получают деньги — как ставка и выигрыш.</p>
     </div>` : ''}
     ${c.guardian ? `<div class="card"><h2>Доверенное лицо клиента</h2>
       <p><b>${esc(c.guardian.name)}</b> · ${esc(GUARD[c.guardian.state] || c.guardian.state)}</p></div>` : ''}
@@ -453,6 +539,7 @@ async function open(id) {
 `;
   if ($('graph')) drawGraph($('graph'), c.graph, c.case_id);
   $('detail').querySelectorAll('[data-open]').forEach(b => b.onclick = () => open(+b.dataset.open));
+  $('detail').querySelectorAll('[data-net-card]').forEach(b => b.onclick = () => goNetwork(b.dataset.netCard));
   $('detail').querySelectorAll('[data-suspend-card]').forEach(b => b.onclick = async () => {
     b.disabled = true;
     try { const n = await api(`/analyst/accounts/${b.dataset.suspendCard}/suspend`, {}); open(n.case_id); }

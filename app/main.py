@@ -42,6 +42,7 @@ COMPLAINT_DAYS = 30             # на перевод можно пожалов�
 COMPLAINT_LIMIT = 3             # жалоб от одного клиента за COMPLAINT_DAYS: защита от блокировок по ложным жалобам
 CHAIN_HOPS = 3                  # на сколько звеньев жалоба проходит по цепочке переводов
 INTERBANK_HOURS = 24            # срок ответа на запрос между банками через Антифрод-центр (в демо)
+SAFE_UNLOCK_HOURS = 24          # «Сейф» через приложение открывается только через сутки
 GUARDIAN_KNOWN_DAYS = 30        # доверенное лицо: человек, с которым переводы идут дольше этого срока
 GUARDIAN_REMOVE_HOURS = 24      # отключение доверенного лица вступает в силу через сутки
 COOLING_MIN = 100_000           # крупный перевод новому получателю уходит не сразу
@@ -130,6 +131,7 @@ def tx():
     with LOCK:
         try:
             _settle_due()       # переводы, у которых закончился период охлаждения, уходят получателю
+            _settle_safes()     # сейфы, которые просили открыть сутки назад, открываются
             yield
             conn.commit()
         except BaseException:
@@ -277,7 +279,7 @@ def _own_case(client: dict, case_id: int, kind: str):
 def demo_clients():
     """Персонажи для показа: под ними входит экран клиента."""
     ensure_demo()
-    rows = conn.execute("SELECT id, name, kind FROM clients WHERE id >= 1001 ORDER BY id").fetchall()
+    rows = conn.execute("SELECT id, name, kind FROM clients WHERE id BETWEEN 1001 AND 1999 ORDER BY id").fetchall()
     # Счета в другом банке нужны как получатели и отправители переводов, войти под ними нельзя.
     return [{"id": r["id"], "name": i18n.name(r["id"], r["name"]), "external": r["kind"] == "external"} for r in rows]
 
@@ -298,7 +300,7 @@ def login(body: LoginIn, request: Request, response: Response):
         s = {"role": "analyst", "name": "Сотрудник банка"}
     elif body.role == "client":
         c = _client(body.client_id or 0)
-        if c["id"] < 1001 or c["kind"] == "external":
+        if not 1001 <= c["id"] <= 1999 or c["kind"] == "external":
             raise HTTPException(403, "Войти можно только под демо-персонажем")
         s = {"role": "client", "client_id": c["id"], "name": c["name"]}
     else:
@@ -366,8 +368,14 @@ def _frozen_sum(cid: int, except_case: int | None = None) -> int:
         (cid, *UNRESOLVED, except_case)).fetchone()["s"]
 
 
+def _safe_sum(cid: int) -> int:
+    """Деньги в «Сейфе»: их нельзя перевести через приложение (не больше, чем есть на счёте)."""
+    row = conn.execute("SELECT amount FROM safes WHERE client_id=?", (cid,)).fetchone()
+    return max(0, min(row["amount"], _client(cid)["balance"])) if row else 0
+
+
 def _available(cid: int) -> int:
-    return _client(cid)["balance"] - _held_sum(cid) - _frozen_sum(cid)
+    return _client(cid)["balance"] - _held_sum(cid) - _frozen_sum(cid) - _safe_sum(cid)
 
 
 def _limited_since(cid: int) -> str | None:
@@ -398,7 +406,7 @@ def client_feed(cid: int, s: dict = Depends(session)):
            WHERE t.sender_id=? OR (t.receiver_id=? AND t.status='done')   -- получатель не видит остановленные
            ORDER BY t.created_at DESC, t.id DESC LIMIT 30""",
         (cid, cid)).fetchall()
-    held, frozen = _held_sum(cid), _frozen_sum(cid)
+    held, frozen, safe = _held_sum(cid), _frozen_sum(cid), _safe_sum(cid)
     feed = []
     for r in rows:
         item = dict(r) | {"direction": "in" if r["receiver_id"] == cid else "out",
@@ -415,10 +423,13 @@ def client_feed(cid: int, s: dict = Depends(session)):
         feed.append(item)
     feed = sorted(feed + _loan_feed(cid), key=lambda x: x["created_at"], reverse=True)[:30]
     return {"id": c["id"], "name": c["name"], "balance": c["balance"], "held": held, "frozen": frozen,
-            "available": max(0, c["balance"] - held - frozen), "status": c["status"], "feed": feed,
+            "available": max(0, c["balance"] - held - frozen - safe), "status": c["status"], "feed": feed,
             "loan": _loan_view(cid) if c["status"] != "blocked" else None,
+            "safe": _safe_view(cid),
+            "guardian_safe": _guardian_safe(cid),
             "kind": c["kind"], "activity": c["activity"],
             "rental": _rental_view(cid) if c["kind"] == "ip" and c["status"] != "blocked" else None,
+            "casino": _casino_view(cid) if c["status"] != "blocked" else None,
             "call": _call_info(cid),
             "complaints": _complaints_view(cid),
             "self_report": _self_report_view(cid),
@@ -484,7 +495,7 @@ def _intercept_view(case) -> dict:
             "amount": tr["amount"], "receiver": i18n.name(tr["receiver_id"], tr["name"]),
             # Что показать клиенту в окне остановки: схема с чужими деньгами, «аренда ИП», деньги из свежего кредита,
             # звонок или подозрительный получатель.
-            "kind": "scheme" if inc else ("rental" if "ip_rental" in codes else
+            "kind": "casino" if "casino_payout" in codes else "scheme" if inc else ("rental" if "ip_rental" in codes else
                                           "loan" if "loan_forward" in codes else
                                           "call" if "suspicious_call" in codes else
                                           "dictation" if set(codes) & SESSION_CODES else
@@ -528,6 +539,11 @@ def create_transfer(body: TransferIn, s: dict = Depends(as_client)):
         if prev:   # новая попытка заменяет прежнюю, её резерв освобождается
             conn.execute("UPDATE transfers SET status='cancelled' WHERE id=?", (prev["transfer_id"],))
     if _available(sender_id) < body.amount:
+        safe = _safe_sum(sender_id)
+        if safe and _available(sender_id) + safe >= body.amount:
+            # Перевести можно было бы только деньги из сейфа. Отказ пишем в журнал: так видно, сколько сейф уберёг.
+            log(f"client:{sender_id}", "safe_refused", None, None, receiver=body.receiver_id, amount=body.amount)
+            return JSONResponse({"detail": t("no_funds_safe", m=_money(safe))}, status_code=400)
         raise HTTPException(400, t("no_funds_frozen" if _frozen_sum(sender_id) else "no_funds"))
 
     if res["decision"] != "hold":
@@ -931,10 +947,12 @@ def _case_view(case) -> dict:
         summary = t("summary_self")
     elif first == "ip_rental":
         summary = t("summary_rental")
+    elif first == "network":
+        summary = t("summary_network")
     elif out:
         gap = int((datetime.fromisoformat(out["created_at"]) - datetime.fromisoformat(inc["created_at"])).total_seconds() // 60)
         summary = t("summary", inc=_money(inc["amount"]), gap=_minutes_text(gap), out=_money(out["amount"]))
-    elif first == "linked":
+    elif first == "linked" or not inc:
         summary = t("summary_linked")
     else:
         summary = t("summary_holder", inc=_money(inc["amount"]))
@@ -1348,12 +1366,123 @@ def guardian_cancel_pending(tid: int, s: dict = Depends(as_client)):
     return _cancel_pending(tr, f"client:{s['client_id']}")
 
 
+# ---------- «Сейф»: сбережения, которые нельзя перевести через приложение ----------
+# Как Money Lock в банках Сингапура. Положить деньги в сейф можно сразу, открыть — только в отделении
+# (в демо — кнопка) или через сутки. Доверенное лицо видит запрос и может его отменить: мошенник не уговорит
+# «срочно перевести все сбережения» за один звонок.
+
+class SafeIn(BaseModel):
+    amount: int = Field(gt=0, le=100_000_000)
+
+
+class SafeUnlockIn(BaseModel):
+    amount: int = Field(gt=0, le=100_000_000)
+    way: str = "delay"          # delay: через сутки | branch: в отделении по удостоверению (в демо — сразу)
+
+
+def _safe_row(cid: int):
+    return conn.execute("SELECT * FROM safes WHERE client_id=?", (cid,)).fetchone()
+
+
+def _safe_view(cid: int) -> dict:
+    row = _safe_row(cid)
+    pending = row and row["unlock_at"]
+    return {"amount": _safe_sum(cid), "unlock_amount": row["unlock_amount"] if pending else None,
+            "unlock_at": row["unlock_at"] if pending else None}
+
+
+def _guardian_safe(gid: int) -> list[dict]:
+    """Для доверенного лица: близкий человек попросил открыть сейф."""
+    rows = conn.execute(
+        """SELECT s.*, c.name FROM safes s JOIN guardians g ON g.client_id=s.client_id JOIN clients c ON c.id=s.client_id
+           WHERE g.guardian_id=? AND (g.remove_at IS NULL OR g.remove_at > ?) AND s.unlock_at IS NOT NULL""",
+        (gid, _now().isoformat())).fetchall()
+    return [{"ward_id": r["client_id"], "ward": i18n.name(r["client_id"], r["name"]), "amount": r["unlock_amount"],
+             "unlock_at": r["unlock_at"]} for r in rows]
+
+
+def _settle_safes():
+    """Сутки прошли — деньги из сейфа становятся доступны."""
+    now = _now().isoformat()
+    for r in conn.execute("SELECT * FROM safes WHERE unlock_at IS NOT NULL AND unlock_at <= ?", (now,)).fetchall():
+        conn.execute("""UPDATE safes SET amount = MAX(0, amount - ?), unlock_amount=NULL, unlock_at=NULL,
+                        unlock_requested_at=NULL, updated_at=? WHERE client_id=?""", (r["unlock_amount"], now, r["client_id"]))
+        log("system", "safe_opened", None, None, client=r["client_id"], amount=r["unlock_amount"])
+
+
+@app.post("/safe/lock")
+def safe_lock(body: SafeIn, s: dict = Depends(as_client)):
+    """Положить деньги в сейф: сразу, без ожидания."""
+    cid = s["client_id"]
+    if _client(cid)["status"] == "blocked":
+        raise HTTPException(403, t("account_blocked"))
+    if _available(cid) < body.amount:
+        raise HTTPException(400, t("safe_no_funds", m=_money(max(0, _available(cid)))))
+    now = _now().isoformat()
+    conn.execute("""INSERT INTO safes(client_id,amount,updated_at) VALUES(?,?,?)
+                    ON CONFLICT(client_id) DO UPDATE SET amount = MIN(amount, ?) + excluded.amount, updated_at=excluded.updated_at""",
+                 (cid, body.amount, now, _client(cid)["balance"]))
+    log(f"client:{cid}", "safe_locked", None, None, amount=body.amount)
+    return _safe_view(cid)
+
+
+@app.post("/safe/unlock")
+def safe_unlock(body: SafeUnlockIn, s: dict = Depends(as_client)):
+    """Открыть сейф: в отделении (в демо — сразу) или через сутки. Через сутки — с уведомлением доверенного лица."""
+    cid = s["client_id"]
+    if body.way not in ("delay", "branch"):
+        raise HTTPException(400, t("safe_way"))
+    if body.amount > _safe_sum(cid):
+        raise HTTPException(400, t("safe_too_much", m=_money(_safe_sum(cid))))
+    now = _now()
+    if body.way == "branch":
+        conn.execute("UPDATE safes SET amount = amount - ?, updated_at=? WHERE client_id=?",
+                     (body.amount, now.isoformat(), cid))
+        log(f"client:{cid}", "safe_opened", None, None, amount=body.amount, way="branch")
+    else:
+        at = (now + timedelta(hours=SAFE_UNLOCK_HOURS)).isoformat()
+        conn.execute("UPDATE safes SET unlock_amount=?, unlock_at=?, unlock_requested_at=? WHERE client_id=?",
+                     (body.amount, at, now.isoformat(), cid))
+        log(f"client:{cid}", "safe_unlock_requested", None, None, amount=body.amount, unlock_at=at)
+    return _safe_view(cid)
+
+
+def _safe_keep(cid: int, actor: str) -> dict:
+    row = _safe_row(cid)
+    if not row or not row["unlock_at"]:
+        raise HTTPException(409, t("safe_no_request"))
+    conn.execute("UPDATE safes SET unlock_amount=NULL, unlock_at=NULL, unlock_requested_at=NULL WHERE client_id=?", (cid,))
+    log(actor, "safe_unlock_cancelled", None, None, client=cid, amount=row["unlock_amount"])
+    return _safe_view(cid)
+
+
+@app.post("/safe/keep")
+def safe_keep(s: dict = Depends(as_client)):
+    """Клиент передумал открывать сейф."""
+    return _safe_keep(s["client_id"], f"client:{s['client_id']}")
+
+
+@app.post("/guardian/safe/{ward_id}/cancel")
+def guardian_safe_cancel(ward_id: int, s: dict = Depends(as_client)):
+    """Доверенное лицо отменяет открытие сейфа близкого человека."""
+    g = _guardian_of(ward_id)
+    if not g or g["guardian_id"] != s["client_id"]:
+        raise HTTPException(404, t("guardian_case"))
+    return _safe_keep(ward_id, f"client:{s['client_id']}")
+
+
 # ---------- «Аренда ИП»: счётом предпринимателя пользуется другой человек ----------
 
 def _rental_view(cid: int) -> dict | None:
     """Предупреждение владельцу ИП: деньги многих незнакомых людей сразу уходят частным лицам."""
     sig = engine.rental_signal(conn, cid, _now())
     return {k: sig[k] for k in ("payers", "inflow", "share")} if sig else None
+
+
+def _casino_view(cid: int) -> dict | None:
+    """Предупреждение владельцу карты: через неё, похоже, проходят ставки и выигрыши онлайн-казино."""
+    sig = engine.casino_signal(conn, cid, _now())
+    return {k: sig[k] for k in ("payers", "payees", "twoway", "inflow")} if sig else None
 
 
 def _rental_accounts() -> list[dict]:
@@ -1453,6 +1582,8 @@ def check_message(body: MessageIn, s: dict = Depends(as_client)):
 def _recruit_view(cid: int) -> dict | None:
     if _client(cid)["kind"] == "ip":
         return None                    # для ИП вместо вербовки проверяется «аренда ИП»
+    if engine.casino_signal(conn, cid, _now()):
+        return None                    # точнее подходит предупреждение о кассе онлайн-казино
     sig = engine.recruitment_signal(conn, cid, _now())
     if not sig:
         return None
@@ -1686,6 +1817,9 @@ def _analyst_case(case_id: int) -> dict:
         "client_status": client["status"],
         "client_kind": client["kind"], "activity": client["activity"],
         "rental": rental,
+        "casino": engine.casino_signal(conn, client["id"], _now()),
+        "network": next(({"key": n["key"], "accounts": len(n["members"]), "farms": len(n["farms"])}
+                         for n in metrics.networks(conn, _now()) if client["id"] in n["members"]), None),
         "graph": _graph(case, linked, rental),
         "incoming": _transfer_view(case["incoming_transfer_id"]),
         "outgoing": _transfer_view(case["transfer_id"]),
@@ -1757,13 +1891,33 @@ def _graph(case, linked: dict | None, rental: dict | None) -> dict:
     tids.discard(None)
     rows = conn.execute(f"""SELECT * FROM transfers WHERE id IN ({",".join("?" * len(tids))}) AND return_of IS NULL
                             ORDER BY created_at""", list(tids)).fetchall() if tids else []
+    return _graph_build(rows, {cid}, cid)
 
+
+def _plural(n: int, one: str, few: str, many: str) -> str:
+    return one if n % 10 == 1 and n % 100 != 11 else few if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else many
+
+
+def _graph_build(rows, ids: set, current: int | None, tags: dict | None = None, phones: list | None = None) -> dict:
+    """Счета и стрелки графа по списку переводов: столбцы, роли, свёрнутые лишние счета.
+
+    `ids` — счета, которые рисуются, даже если переводов у них нет; `current` — клиент случая (у графа сети его нет);
+    `tags` — короткие пометки у счетов (например, «телефон 1»), такие счета не сворачиваются; `phones` — дроп-телефоны
+    сети: телефон рисуется отдельным узлом, пунктир ведёт к счетам, в которые с него входят.
+    """
+    now, tags = _now(), tags or {}
     # Переводы между одной парой счетов складываются в одну стрелку; проведённые и остановленные — отдельно.
     edges: dict[tuple, dict] = {}
+    for p in phones or []:
+        for a in p["accounts"]:
+            edges[(f"phone-{p['n']}", a["id"], "device")] = {
+                "from": f"phone-{p['n']}", "to": a["id"], "amount": 0, "count": 0, "returned": 0,
+                "status": "device", "last_at": ""}
     for t in rows:
         moved = t["status"] == "done"
-        e = edges.setdefault((t["sender_id"], t["receiver_id"], moved), {
-            "from": t["sender_id"], "to": t["receiver_id"], "amount": 0, "count": 0, "returned": 0,
+        a, b = t["sender_id"], t["receiver_id"]
+        e = edges.setdefault((a, b, moved), {
+            "from": a, "to": b, "amount": 0, "count": 0, "returned": 0,
             "status": "done" if moved else t["status"], "last_at": t["created_at"]})
         e["amount"] += t["amount"]
         e["count"] += 1
@@ -1771,19 +1925,39 @@ def _graph(case, linked: dict | None, rental: dict | None) -> dict:
         e["last_at"] = t["created_at"]
         if not moved and t["status"] in ("held", "pending"):
             e["status"] = t["status"]
-    ids = {cid} | {x for e in edges.values() for x in (e["from"], e["to"])}
+    ids = set(ids) | {x for e in edges.values() for x in (e["from"], e["to"])}
 
     # Столбцы: счёт стоит как можно правее, сразу перед теми, кому переводил (самый длинный путь до конца цепочки).
-    # Так стрелки не перескакивают через столбцы и не идут сквозь другие счета.
-    rest = {i: 0 for i in ids}
-    for _ in range(len(ids)):
-        changed = False
-        for e in edges.values():
-            if rest[e["from"]] < rest[e["to"]] + 1 <= len(ids):
-                rest[e["from"]] = rest[e["to"]] + 1
-                changed = True
-        if not changed:
-            break
+    # Так стрелки не перескакивают через столбцы и не идут сквозь другие счета. Стрелка, которая замыкает круг
+    # (деньги вернулись туда, откуда пришли), в расчёт не берётся, иначе граф растягивается на десятки столбцов;
+    # сначала учитываются крупные переводы.
+    succ: dict = {i: set() for i in ids}
+
+    def reaches(a, b) -> bool:
+        stack, seen = [a], set()
+        while stack:
+            x = stack.pop()
+            if x == b:
+                return True
+            if x not in seen:
+                seen.add(x)
+                stack.extend(succ[x])
+        return False
+
+    for e in sorted(edges.values(), key=lambda e: (e["status"] != "device", -e["amount"])):
+        if e["from"] != e["to"] and not reaches(e["to"], e["from"]):
+            succ[e["from"]].add(e["to"])
+    rest: dict = {}
+    for i in sorted(ids, key=str):
+        stack = [i]
+        while stack:            # самый длинный путь вперёд, без рекурсии
+            x = stack[-1]
+            todo = [y for y in succ[x] if y not in rest]
+            if todo:
+                stack.extend(todo)
+                continue
+            stack.pop()
+            rest[x] = max((rest[y] + 1 for y in succ[x]), default=0)
     last = max(rest.values())
     col = {i: last - rest[i] for i in ids}
 
@@ -1792,12 +1966,21 @@ def _graph(case, linked: dict | None, rental: dict | None) -> dict:
         f"""SELECT complainant_id FROM complaints WHERE transfer_id IN ({",".join("?" * len(rows))})""",
         [t["id"] for t in rows])} if rows else set()
     nodes = {}
+    for p in phones or []:      # дроп-телефон
+        n = len(p["accounts"])
+        nodes[f"phone-{p['n']}"] = {
+            "id": f"phone-{p['n']}", "name": f"Телефон {p['n']}", "model": p["model"],
+            "accounts": n, "status": "active", "kind": "device", "bank": None, "request": None, "role": "device",
+            "afc": None, "age_days": None, "case_id": None, "frozen": 0, "tag": None, "col": col[f"phone-{p['n']}"],
+            "weight": 10 ** 12}
     for i in ids:
+        if i in nodes:
+            continue
         c = _client(i)
         k = conn.execute("""SELECT id, kind, status, scope, frozen FROM cases WHERE client_id=?
                             ORDER BY (status IN ('open','under_review','kept')) DESC, created_at DESC LIMIT 1""",
                          (i,)).fetchone()
-        role = "current" if i == cid else "victim" if i in victims else "account"
+        role = "current" if i == current else "victim" if i in victims else "account"
         # Счёт в другом банке: что ответил тот банк на наш запрос.
         ask = conn.execute("""SELECT i.status, i.frozen FROM interbank i JOIN transfers t ON t.id=i.transfer_id
                               WHERE t.receiver_id=? AND i.direction='out' ORDER BY i.id DESC LIMIT 1""",
@@ -1807,11 +1990,12 @@ def _graph(case, linked: dict | None, rental: dict | None) -> dict:
                     "afc": engine.afc_status(conn, i), "age_days": (now - datetime.fromisoformat(c["account_opened_at"])).days,
                     "case_id": k["id"] if k else None,
                     "frozen": k["frozen"] if k and k["kind"] == "block" and k["status"] in UNRESOLVED else 0,
-                    "col": col[i], "weight": sum(e["amount"] for e in edges.values() if i in (e["from"], e["to"]))}
+                    "tag": tags.get(i), "col": col[i],
+                    "weight": sum(e["amount"] for e in edges.values() if i in (e["from"], e["to"]))}
 
     # Слишком много счетов в одном столбце (например, плательщики арендованного ИП) — лишние сворачиваются.
     for c_ in sorted(set(col.values())):
-        members = sorted((n for n in nodes.values() if n["col"] == c_ and n["role"] == "account"),
+        members = sorted((n for n in nodes.values() if n["col"] == c_ and n["role"] == "account" and not n["tag"]),
                          key=lambda n: -n["weight"])
         others = sum(1 for n in nodes.values() if n["col"] == c_) - len(members)   # клиент случая, пострадавший
         if others + len(members) <= GRAPH_MAX_COLUMN:
@@ -1819,9 +2003,9 @@ def _graph(case, linked: dict | None, rental: dict | None) -> dict:
         extra = members[max(0, GRAPH_MAX_COLUMN - 1 - others):]   # одно место — под «ещё N счетов»
         gid = f"more-{c_}"
         n = len(extra)
-        word = "счёт" if n % 10 == 1 and n % 100 != 11 else "счёта" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "счетов"
-        nodes[gid] = {"id": gid, "name": f"ещё {n} {word}", "status": "active", "kind": "group", "bank": None, "request": None,
-                      "role": "group", "afc": None, "age_days": None, "case_id": None, "frozen": 0, "col": c_,
+        nodes[gid] = {"id": gid, "name": f"ещё {n} {_plural(n, 'счёт', 'счёта', 'счетов')}", "status": "active", "kind": "group",
+                      "bank": None, "request": None,
+                      "role": "group", "afc": None, "age_days": None, "case_id": None, "frozen": 0, "tag": None, "col": c_,
                       "weight": sum(n["weight"] for n in extra)}
         hidden = {n["id"] for n in extra}
         merged: dict[tuple, dict] = {}
@@ -1945,15 +2129,20 @@ def _suspend(cid: int, reason: dict, text: str) -> dict:
     if conn.execute("""SELECT 1 FROM cases WHERE client_id=? AND kind='block'
                        AND status IN ('open','under_review')""", (cid,)).fetchone():
         raise HTTPException(409, "По этому счёту уже есть нерешённая блокировка")
+    return _analyst_case(_suspend_case(cid, reason, text))
+
+
+def _suspend_case(cid: int, reason: dict, text: str) -> int:
     inc = conn.execute("SELECT id FROM transfers WHERE receiver_id=? ORDER BY created_at DESC, id DESC LIMIT 1",
                        (cid,)).fetchone()
     case_id = conn.execute(
         """INSERT INTO cases(client_id,transfer_id,incoming_transfer_id,kind,score,reasons,created_at)
            VALUES(?,NULL,?,'block',?,?,?)""",
-        (cid, inc["id"], reason["points"], json.dumps([reason], ensure_ascii=False), _now().isoformat())).lastrowid
+        (cid, inc["id"] if inc else None, reason["points"], json.dumps([reason], ensure_ascii=False),
+         _now().isoformat())).lastrowid
     _refresh_status(cid)
-    log("analyst", "blocked", case_id, inc["id"], text=text)
-    return _analyst_case(case_id)
+    log("analyst", "blocked", case_id, inc["id"] if inc else None, text=text)
+    return case_id
 
 
 @app.post("/analyst/accounts/{cid}/suspend")
@@ -1983,6 +2172,135 @@ def suspend_rental(cid: int, s: dict = Depends(as_analyst)):
                           "text": f"Похоже на «аренду ИП»: за неделю деньги от {sig['payers']} незнакомых людей, "
                                   f"{sig['share']}% ушло частным лицам"},
                     "Операции приостановлены сотрудником: признаки «аренды ИП»")
+
+
+# ---------- Сети дропперов и дроп-фермы ----------
+# Сеть — счета, связанные общим «дроп-телефоном» или переводами между подозрительными счетами (metrics.networks).
+# Сотрудник видит её целиком: телефоны, счета, граф денег, и одной кнопкой приостанавливает счета на дроп-телефонах.
+
+def _network(key: str) -> dict:
+    found = next((n for n in metrics.networks(conn, _now()) if n["key"] == key), None)
+    if not found:
+        raise HTTPException(404, "Сеть не найдена: возможно, её счета уже разобраны")
+    return found
+
+
+def _network_view(n: dict, full: bool = False) -> dict:
+    """Сводка по сети; full — со счетами, телефонами и графом денег для карточки сотрудника."""
+    now, members = _now(), n["members"]
+    q = ",".join("?" * len(members))
+    since = (now - timedelta(days=metrics.NET_DAYS)).isoformat()
+    clients = {c["id"]: c for c in conn.execute(f"SELECT * FROM clients WHERE id IN ({q})", members)}
+    inside = conn.execute(f"""SELECT * FROM transfers WHERE sender_id IN ({q}) AND receiver_id IN ({q})
+                              AND created_at >= ? AND return_of IS NULL ORDER BY created_at""",
+                          members + members + [since]).fetchall()
+    inflow = conn.execute(f"""SELECT COALESCE(SUM(amount),0) AS s, COUNT(DISTINCT sender_id) AS n FROM transfers
+                              WHERE receiver_id IN ({q}) AND sender_id NOT IN ({q}) AND status='done'
+                                AND return_of IS NULL AND created_at >= ?""", members + members + [since]).fetchone()
+    partners: dict[int, set] = {i: set() for i in members}
+    for t in inside:
+        if t["status"] in ("done", "held", "pending") and t["sender_id"] != t["receiver_id"]:
+            partners[t["sender_id"]].add(t["receiver_id"])
+            partners[t["receiver_id"]].add(t["sender_id"])
+    linked = {a["client_id"] for a in metrics.linked_accounts(conn)}
+    # Центр сети — счёт, с которым связано больше всего других счетов сети (обычно карта организатора).
+    center = max(members, key=lambda i: (len(partners[i]), i in linked, -i))
+    phones: dict[int, list] = {}
+    for k, f in enumerate(n["farms"], 1):
+        for i in f["accounts"]:
+            phones.setdefault(i, []).append(k)
+    view = {
+        "key": n["key"], "accounts": len(members),
+        "names": [clients[i]["name"] for i in [center] + [m for m in members if m != center]][:4],
+        "farms": [{"n": k, "model": f["model"], "device_id": f["device_id"], "factors": f["factors"],
+                   "accounts": [{"id": i, "name": clients[i]["name"]} for i in f["accounts"]]}
+                  for k, f in enumerate(n["farms"], 1)],
+        "center": {"id": center, "name": clients[center]["name"], "links": len(partners[center])},
+        "inflow": inflow["s"], "senders": inflow["n"],
+        "blocked": sum(1 for c in clients.values() if c["status"] == "blocked"),
+        "to_suspend": sum(1 for i in phones if clients[i]["status"] == "active"),
+    }
+    if not full:
+        return view
+    marks = engine.dropper_marks(conn, members)
+    came = {r["receiver_id"]: r for r in conn.execute(
+        f"""SELECT receiver_id, SUM(amount) AS s, COUNT(DISTINCT sender_id) AS n FROM transfers
+            WHERE receiver_id IN ({q}) AND sender_id NOT IN ({q}) AND status='done' AND return_of IS NULL
+              AND created_at >= ? GROUP BY receiver_id""", members + members + [since])}
+    cases: dict[int, int] = {}
+    for k in conn.execute(f"""SELECT id, client_id FROM cases WHERE client_id IN ({q})
+                              ORDER BY (status IN ('open','under_review','kept')) DESC, created_at DESC""", members):
+        cases.setdefault(k["client_id"], k["id"])
+    view["members"] = [{
+        "id": i, "name": clients[i]["name"], "status": clients[i]["status"], "kind": clients[i]["kind"],
+        "age_days": (now - datetime.fromisoformat(clients[i]["account_opened_at"])).days,
+        "marks": marks[i] + (["встречается в нескольких независимых случаях"] if i in linked else []),
+        "phones": phones.get(i, []), "case_id": cases.get(i), "center": i == center,
+        "inflow": came[i]["s"] if i in came else 0, "senders": came[i]["n"] if i in came else 0,
+    } for i in sorted(members, key=lambda i: (i != center, not phones.get(i), clients[i]["name"]))]
+    # На графе — телефоны, переводы внутри сети и переводы пострадавших, которые пожаловались. Сколько денег пришло
+    # извне, видно в списке счетов: иначе десятки плательщиков закрывают собой схему.
+    victims = conn.execute(f"""SELECT t.* FROM complaints p JOIN transfers t ON t.id=p.transfer_id
+                               WHERE t.receiver_id IN ({q}) AND t.created_at >= ?""", members + [since]).fetchall()
+    tags = {i: ("телефоны " if len(p) > 1 else "телефон ") + ", ".join(map(str, p)) for i, p in phones.items()}
+    tags[center] = (tags[center] + ", центр") if center in tags else "центр сети"
+    view["graph"] = _graph_build(list(inside) + list(victims), set(members), None, tags, view["farms"])
+    return view
+
+
+@app.get("/analyst/networks")
+def analyst_networks(s: dict = Depends(as_analyst)):
+    """Сети дропперов: сначала те, где есть что приостановить."""
+    views = [_network_view(n) for n in metrics.networks(conn, _now())]
+    return sorted(views, key=lambda v: (v["to_suspend"] == 0, -len(v["farms"]), -v["accounts"]))
+
+
+@app.get("/analyst/networks/{key}")
+def analyst_network(key: str, s: dict = Depends(as_analyst)):
+    return _network_view(_network(key), full=True)
+
+
+@app.post("/analyst/networks/{key}/suspend")
+def suspend_network(key: str, s: dict = Depends(as_analyst)):
+    """Приостановить счета, в которые входят с дроп-телефонов этой сети: ими, похоже, управляет один человек.
+
+    Остальные счета сети (например, невольные участники, переславшие деньги по просьбе мошенника) сотрудник
+    разбирает по одному: у них может быть соразмерная блокировка.
+    """
+    n = _network(key)
+    done: list[int] = []
+    for f in n["farms"]:
+        for cid in f["accounts"]:
+            if cid in done or _client(cid)["status"] != "active":
+                continue
+            _suspend_case(cid, {"code": "network", "points": 60,
+                                "text": f"Вход в приложение с телефона, через который работают счета {len(f['accounts'])} "
+                                        "разных людей (дроп-ферма)"},
+                          f"Операции приостановлены сотрудником: счёт в сети дропперов, телефон {f['model']}")
+            done.append(cid)
+    if not done:
+        raise HTTPException(409, "Все счета на дроп-телефонах этой сети уже приостановлены или ограничены")
+    return {"suspended": len(done)} | _network_view(_network(key), full=True)
+
+
+@app.post("/analyst/networks/{key}/report")
+def network_report(key: str, s: dict = Depends(as_analyst)):
+    """Сведения о сети для передачи в Антифрод-центр и АФМ: счета, телефоны, переводы. Формат условный."""
+    v = _network_view(_network(key), full=True)
+    report = {
+        "format": "Сведения о сети дропперских счетов (прототип, формат условный)",
+        "generated_at": _now().isoformat(), "generated_by": s["name"],
+        "network": {k: v[k] for k in ("key", "accounts", "inflow", "senders", "blocked", "center")},
+        "accounts": [{k: m[k] for k in ("id", "name", "status", "kind", "age_days", "marks", "phones", "case_id")}
+                     for m in v["members"]],
+        "devices": [{"n": f["n"], "device_id": f["device_id"], "model": f["model"], "factors": f["factors"],
+                     "accounts": [a["id"] for a in f["accounts"]]} for f in v["farms"]],
+        "transfers": [{k: e[k] for k in ("from", "to", "amount", "count", "status", "returned")}
+                      for e in v["graph"]["edges"]],
+    }
+    log("analyst", "network_report", None, None, text=f"Выгружены сведения о сети {key}: {v['accounts']} счетов")
+    return RawResponse(json.dumps(report, ensure_ascii=False, indent=2), media_type="application/json", headers={
+        "Content-Disposition": f'attachment; filename="network-{key}.json"', "Cache-Control": "no-store"})
 
 
 # ---------- Запросы между банками через Антифрод-центр ----------
@@ -2143,8 +2461,11 @@ def antifraud_report(case_id: int, s: dict = Depends(as_analyst)):
                            if card["linked"] else None),
         "client_explanation": card["explanation"],
         "documents": [{"filename": d["filename"], "title": d["title"], "size": d["size"]} for d in card["documents"]],
-        "technical": {"ip": None, "geolocation": None, "phone_numbers": None, "device_id": None,
-                      "note": "В демо-данных нет. В банке берутся из журналов мобильного приложения."},
+        "technical": {"ip": None, "geolocation": None, "phone_numbers": None,
+                      "devices": [dict(d) for d in conn.execute(
+                          "SELECT device_id, model, first_seen, last_seen FROM devices WHERE client_id=? ORDER BY last_seen DESC",
+                          (client["id"],))],
+                      "note": "IP-адреса, геолокации и номеров в демо-данных нет. В банке берутся из журналов мобильного приложения."},
         "history": [{"at": h["at"], "who": h["who"], "text": h["text"]} for h in card["history"]],
     }
     log("analyst", "report", case_id, None)
