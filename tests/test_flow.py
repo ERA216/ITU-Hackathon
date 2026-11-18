@@ -194,7 +194,7 @@ def test_analyst_code_is_checked_and_rate_limited():
 def test_empty_database_is_filled_on_first_request(tmp_path):
     main.conn.close()
     main.conn = db.connect(str(tmp_path / "empty.db"))
-    assert len(TestClient(main.app).get("/demo/clients").json()) == 13
+    assert len(TestClient(main.app).get("/demo/clients").json()) == 15
 
 
 def test_stale_demo_data_is_recreated():
@@ -408,7 +408,7 @@ def test_old_database_is_rebuilt(tmp_path):
     old.close()
     main.conn.close()
     main.conn = db.connect(str(path))
-    assert len(TestClient(main.app).get("/demo/clients").json()) == 13
+    assert len(TestClient(main.app).get("/demo/clients").json()) == 15
 
 
 def test_quality_page_is_served_with_current_threshold():
@@ -547,7 +547,7 @@ def test_empty_amount_gets_a_readable_error_and_complaints_are_limited():
 
 HISTORY_DB = os.path.join(_tmp, "history.db")
 _h = db.connect(HISTORY_DB)
-seed.populate(_h, evaluate=True, with_history=True)
+seed.populate(_h, evaluate=True, with_history=True, with_business=False)   # как на демо-сервере
 _h.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('history','1')")
 _h.commit()
 _h.close()
@@ -1379,3 +1379,99 @@ def test_history_lists_droppers_only_after_first_stop(with_history):
     assert all(r["added_at"] > r["first"] for r in rows)
     m = analyst().get("/analyst/metrics").json()
     assert 0 < m["compensation_avoided"] < m["saved_amount"]
+
+
+# ---------- «Аренда ИП» ----------
+
+RENTED_IP, HONEST_SHOP = 1014, 1015
+
+
+def test_rented_ip_has_signal_and_its_transit_is_held():
+    nur = client(RENTED_IP)
+    acc = account(nur, RENTED_IP)
+    assert acc["kind"] == "ip" and acc["activity"]
+    assert acc["rental"]["payers"] == 8 and acc["rental"]["share"] >= 70
+    assert not any(t.get("warning") for t in acc["feed"])         # выручка ИП — не «возможно, чужие деньги»
+    assert acc["recruit"] is None
+    r = send(nur, DROP_CARD, 150000).json()
+    assert r["status"] == "held" and r["kind"] == "rental" and r["safe_return"] is None
+    assert "ip_rental" in {x["code"] for x in r["reasons"]}
+    card = analyst().get(f"/analyst/cases/{r['case_id']}").json()
+    assert card["client_kind"] == "ip" and card["rental"]["quiet"] and len(card["rental"]["factors"]) == 3
+    assert any("аренду ИП" in f["text"] for f in card["role"]["factors"])
+
+
+def test_honest_shop_has_no_signal_and_pays_freely():
+    asel = client(HONEST_SHOP)
+    acc = account(asel, HONEST_SHOP)
+    assert acc["kind"] == "ip" and acc["rental"] is None
+    assert not any(t.get("warning") for t in acc["feed"])
+    week = main._now() - timedelta(days=engine.RENT_DAYS)
+    payers = main.conn.execute("SELECT COUNT(DISTINCT sender_id) FROM transfers WHERE receiver_id=? AND created_at >= ?",
+                               (HONEST_SHOP, week.isoformat())).fetchone()[0]
+    assert payers >= engine.RENT_PAYERS                          # незнакомых покупателей много, но это не транзит
+    assert send(asel, SUPPLIER, 50000).json()["status"] == "done"
+    assert send(asel, MOM, 20000).json()["status"] == "done"     # небольшая оплата частному лицу
+
+
+def test_ip_owner_does_not_get_scheme_rules_for_customer_money():
+    # Честный магазин получил оплату и сразу платит новому частному лицу ту же сумму: у частного лица это была бы
+    # схема «ошибочный перевод», у ИП — обычная работа, пока нет признаков аренды.
+    res = engine.evaluate(main.conn, HONEST_SHOP, MOM, 30000, main._now())
+    assert res["decision"] == "allow" and res["incoming_id"] is None
+
+
+def test_analyst_business_tab_and_suspend():
+    an = analyst()
+    listed = [a["client_id"] for a in an.get("/analyst/business").json()]
+    assert RENTED_IP in listed and HONEST_SHOP not in listed and SUPPLIER not in listed
+    assert client(STUDENT).get("/analyst/business").status_code == 401
+    assert client(STUDENT).post(f"/analyst/business/{RENTED_IP}/suspend").status_code == 401
+    assert an.post(f"/analyst/business/{HONEST_SHOP}/suspend").status_code == 404
+    case = an.post(f"/analyst/business/{RENTED_IP}/suspend").json()
+    assert case["client_status"] == "blocked" and case["reasons"][0]["code"] == "ip_rental"
+    assert an.post(f"/analyst/business/{RENTED_IP}/suspend").status_code == 409
+    nur = client(RENTED_IP)
+    assert nur.get(f"/clients/{RENTED_IP}/case").json()["summary"].startswith("Похоже, счётом вашего ИП")
+    assert account(nur, RENTED_IP)["rental"] is None                 # счёт закрыт: вместо карточки — блокировка
+    rows = {a["client_id"]: a for a in an.get("/analyst/business").json()}
+    assert rows[RENTED_IP]["status"] == "blocked"
+    m = an.get("/analyst/metrics").json()
+    assert m["rental_accounts"] == len(rows) and m["rental_suspended"] == 1
+
+
+def test_rented_ip_owner_can_report_himself():
+    nur = client(RENTED_IP)
+    assert nur.post("/self-report", json={"kind": "card", "details": WORDS}).status_code == 200
+    assert account(nur, RENTED_IP)["status"] == "blocked"
+
+
+def test_rental_texts_in_kazakh():
+    nur = client(RENTED_IP)
+    nur.cookies.set("ca_lang", "kk")
+    r = send(nur, DROP_CARD, 150000).json()
+    assert any(x["text"].startswith("ЖК шотына") for x in r["reasons"])
+    analyst().post(f"/analyst/business/{RENTED_IP}/suspend")
+    assert nur.get(f"/clients/{RENTED_IP}/case").json()["summary"].startswith("Сіздің ЖК шотыңызды")
+
+
+def test_rental_rules_on_synthetic_business_accounts():
+    # Платежи честных ИП движок не останавливает, транзит арендованных — в основном останавливает.
+    by = {}
+    for scen, held, _ in STATS["ip_scored"]:
+        by.setdefault(scen, []).append(held)
+    for honest in ("ipo_supplier", "ipo_owner", "ipo_agent", "ipo_buyer", "ipo_contractor"):
+        assert by[honest] and not any(by[honest]), honest
+    rent = by["ipo_rent_quiet"] + by["ipo_rent_young"]
+    assert sum(rent) / len(rent) >= 0.7
+    assert any(by["ipo_rent_active"])            # и у ИП, который до аренды работал как обычный магазин
+    # Правила отмечают арендованные ИП и не отмечают честные магазины, посредников и скупку.
+    from app import quality
+    pick = {}
+    for label, n in (("shop", 3), ("buyer", 2), ("agent", 1), ("rent_quiet", 2), ("rent_young", 1), ("rent_active", 1)):
+        ids = [cid for cid, lb in STATS["ip_labels"].items() if lb == label][:n]
+        pick |= {cid: label for cid in ids}
+    flags = quality.business_flags(main.conn, pick, STATS["now"])
+    assert len(flags) == 10
+    for cid, flagged in flags.items():
+        assert flagged == STATS["ip_labels"][cid].startswith("rent_"), STATS["ip_labels"][cid]

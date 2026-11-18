@@ -22,6 +22,15 @@ SCAM_MESSAGE_MINUTES = 60           # сколько действует приз
 # Схема «встречный кредит»: клиента уговаривают взять кредит и сразу перевести деньги «на безопасный счёт».
 LOAN_HOURS = 72                     # сколько после выдачи кредита следим, куда уходят его деньги
 LOAN_SHARE = 0.5                    # признак срабатывает, когда новым получателям уходит половина кредита и больше
+# «Аренда ИП»: владелец за процент передаёт доступ к счёту ИП, через него проводят деньги обманутых людей.
+RENT_DAYS = 7                       # за какой период смотрим на поступления
+RENT_PAYERS = 3                     # столько частных лиц, которые раньше не платили этому ИП
+RENT_TRANSIT = 0.7                  # такая доля поступлений от частных лиц ушла частным лицам, которым ИП раньше не переводил
+RENT_FAST_HOURS = 48                # транзит — только «свежие» деньги: за 48 ч до перевода пришло не меньше 80% его суммы
+RENT_FAST_SHARE = 0.8
+RENT_QUIET_DAYS = 60                # «спящий» ИП: оборот за 60 дней до этого меньше RENT_QUIET_SHARE поступлений
+RENT_QUIET_SHARE = 0.2              # или раньше частным лицам уходило меньше этой доли поступлений (поведение поменялось)
+RENT_YOUNG_DAYS = 90                # или ИП открыт меньше 90 дней назад
 
 
 def _dt(s: str) -> datetime:
@@ -75,7 +84,10 @@ def evaluate(conn, sender_id: int, receiver_id: int, amount: int, now: datetime)
         score += points
         reasons.append({"code": code, "points": points, "text": text})
 
-    incomings = _stranger_incomings(conn, sender_id, now)
+    # У ИП платежи от незнакомых людей — обычная выручка: признаки «ошибочного перевода» к ним не применяются,
+    # вместо них проверяется «аренда ИП» (ниже).
+    business = _kind(conn, sender_id) == "ip"
+    incomings = [] if business else _stranger_incomings(conn, sender_id, now)
 
     # Возврат тому же отправителю безопасен, но только в пределах того, что он прислал. Иначе мошенник
     # присылает 1 000 ₸ и просит перевести на ту же карту 150 000: такой перевод проверяется как обычный.
@@ -132,6 +144,16 @@ def evaluate(conn, sender_id: int, receiver_id: int, amount: int, now: datetime)
         if sent + amount >= LOAN_SHARE * loan["amount"]:
             add("loan_forward", 40, "Деньги из кредита, выданного меньше трёх суток назад, уходят новому получателю")
 
+    # «Аренда ИП»: вместе с этим переводом частным лицам уходит большая часть денег незнакомых плательщиков.
+    # Получатель «новый», если до этой недели ИП ему не переводил: арендатор гонит деньги на одни и те же 1–3 карты.
+    # Признак сам по себе останавливает перевод: в нём уже три условия (см. rental_signal).
+    if (business and _kind(conn, receiver_id) == "person"
+            and not _had_contact(conn, sender_id, receiver_id, (now - timedelta(days=RENT_DAYS)).isoformat())):
+        sig = rental_signal(conn, sender_id, now, extra=amount)
+        if sig:
+            add("ip_rental", 60, f"Счёт ИП за неделю получил деньги от {sig['payers']} незнакомых людей, и {sig['share']}% "
+                                 "уходит частным лицам: похоже на «аренду ИП»")
+
     # Внешние сигналы: база Антифрод-центра и оператор связи («Телеком Антифрод»).
     if afc_status(conn, receiver_id) == "grey":
         add("afc_grey", 50, "Получатель в списке подозрительных счетов Антифрод-центра")
@@ -185,6 +207,92 @@ def scam_message(conn, client_id: int, now: datetime) -> str | None:
                           AND at >= ? AND at <= ? ORDER BY at DESC LIMIT 1""",
                        (client_id, since, now.isoformat())).fetchone()
     return row["scheme"] if row else None
+
+
+def _kind(conn, client_id: int) -> str | None:
+    row = conn.execute("SELECT kind FROM clients WHERE id=?", (client_id,)).fetchone()
+    return row["kind"] if row else None
+
+
+def rental_signal(conn, client_id: int, now: datetime, extra: int = 0) -> dict | None:
+    """Похоже, что счётом ИП пользуется другой человек («аренда ИП»).
+
+    Нужны все три признака: за неделю платили RENT_PAYERS и больше частных лиц, которые раньше не платили этому ИП;
+    RENT_TRANSIT и больше всех поступлений от частных лиц за неделю сразу ушло частным лицам, которым ИП до этой
+    недели не переводил (`extra` — перевод, который сейчас проверяет движок); поведение необычно для этого счёта —
+    ИП почти не работал, открыт недавно или раньше частным лицам деньги почти не уходили.
+
+    Честный магазин тоже получает деньги от незнакомцев, но платит поставщикам. Честная скупка платит частным
+    лицам, но так было всегда. Разовая оплата частному лицу (ремонт) идёт из выручки за неделю и больше, а не из
+    денег, пришедших только что, поэтому транзитом не считается.
+    """
+    def fresh_in(at: str) -> int:
+        """Сколько денег от частных лиц пришло за RENT_FAST_HOURS до этого момента."""
+        return conn.execute(
+            """SELECT COALESCE(SUM(t.amount),0) AS s FROM transfers t JOIN clients s ON s.id=t.sender_id
+               WHERE t.receiver_id=? AND t.status='done' AND t.return_of IS NULL AND s.kind='person'
+                 AND t.created_at >= ? AND t.created_at <= ?""",
+            (client_id, (_dt(at) - timedelta(hours=RENT_FAST_HOURS)).isoformat(), at)).fetchone()["s"]
+
+    c = conn.execute("SELECT kind, account_opened_at FROM clients WHERE id=?", (client_id,)).fetchone()
+    if not c or c["kind"] != "ip":
+        return None
+    since = (now - timedelta(days=RENT_DAYS)).isoformat()
+    rows = conn.execute(
+        """SELECT t.sender_id, t.amount FROM transfers t JOIN clients s ON s.id=t.sender_id
+           WHERE t.receiver_id=? AND t.status='done' AND t.return_of IS NULL AND s.kind='person'
+             AND t.created_at >= ? AND t.created_at <= ?
+             AND NOT EXISTS (SELECT 1 FROM transfers r WHERE r.return_of=t.id AND r.status='done')""",
+        (client_id, since, now.isoformat())).fetchall()
+    senders = {r["sender_id"] for r in rows if not _had_contact(conn, client_id, r["sender_id"], since)}
+    if len(senders) < RENT_PAYERS:
+        return None
+    # Долю транзита считаем от всех поступлений от частных лиц: у честного магазина много постоянных покупателей.
+    inflow = sum(r["amount"] for r in rows)
+    payers = {r["sender_id"] for r in rows}
+    # Возврат денег самим плательщикам (отказ от покупки) — не транзит.
+    outs = conn.execute(
+        """SELECT t.receiver_id, t.amount, t.created_at FROM transfers t JOIN clients r ON r.id=t.receiver_id
+           WHERE t.sender_id=? AND t.status IN ('done','pending') AND t.return_of IS NULL AND r.kind='person'
+             AND t.created_at >= ? AND t.created_at <= ?""", (client_id, since, now.isoformat())).fetchall()
+    fast = [o for o in outs if o["receiver_id"] not in payers
+            and not _had_contact(conn, client_id, o["receiver_id"], since)
+            and fresh_in(o["created_at"]) >= RENT_FAST_SHARE * o["amount"]]
+    receivers = {o["receiver_id"] for o in fast}
+    if extra and fresh_in(now.isoformat()) < RENT_FAST_SHARE * extra:
+        extra = 0
+    transit = sum(o["amount"] for o in fast) + extra
+    if transit < RENT_TRANSIT * inflow:
+        return None
+    age = (now - _dt(c["account_opened_at"])).days
+    prev = ((now - timedelta(days=RENT_DAYS + RENT_QUIET_DAYS)).isoformat(), since)
+    before = conn.execute(
+        """SELECT COALESCE(SUM(amount),0) AS s FROM transfers WHERE status='done' AND created_at >= ? AND created_at < ?
+           AND (sender_id=? OR receiver_id=?)""", (*prev, client_id, client_id)).fetchone()["s"]
+    prev_in, prev_out = (conn.execute(
+        f"""SELECT COALESCE(SUM(t.amount),0) AS s FROM transfers t JOIN clients p ON p.id=t.{side}
+            WHERE t.{own}=? AND t.status='done' AND t.return_of IS NULL AND p.kind='person'
+              AND t.created_at >= ? AND t.created_at < ?""", (client_id, *prev)).fetchone()["s"]
+        for side, own in (("sender_id", "receiver_id"), ("receiver_id", "sender_id")))
+    quiet, young = before < RENT_QUIET_SHARE * inflow, age < RENT_YOUNG_DAYS
+    changed = not quiet and prev_in > 0 and prev_out < RENT_QUIET_SHARE * prev_in
+    if not (quiet or young or changed):
+        return None
+    share = min(100, round(100 * transit / inflow))
+    money = lambda n: f"{n:,}".replace(",", " ") + " ₸"   # noqa: E731
+    factors = [f"За {RENT_DAYS} дней платили {len(senders)} частных лиц, которые раньше не платили этому ИП; "
+               f"всего от частных лиц поступило {money(inflow)}",
+               f"{share}% этих денег сразу ушло частным лицам, которым ИП раньше не переводил "
+               f"(получателей: {len(receivers)})"]
+    if quiet:
+        factors.append(f"До этого ИП почти не работал: оборот за {RENT_QUIET_DAYS} дней — {money(before)}")
+    if changed:
+        factors.append(f"Раньше частным лицам уходило {round(100 * prev_out / prev_in)}% поступлений, "
+                       f"а теперь {share}%: счёт стал работать по-другому")
+    if young:
+        factors.append(f"Счёт ИП открыт {age} дн. назад")
+    return {"payers": len(senders), "inflow": inflow, "transit": transit, "share": share, "receivers": len(receivers),
+            "quiet": quiet, "young": young, "changed": changed, "age_days": age, "before": before, "factors": factors}
 
 
 def fresh_loan(conn, client_id: int, now: datetime):
@@ -294,6 +402,8 @@ def assess_role(conn, client_id: int, case, now: datetime) -> dict:
                           (client_id, case["created_at"])).fetchone()
     if warned:
         add(-1, "Клиента предупреждали о признаках вербовки, он ответил, что знает отправителей")
+    if rental_signal(conn, client_id, now):
+        add(-2, "Похоже на «аренду ИП»: деньги многих незнакомых людей сразу уходят частным лицам")
 
     docs = conn.execute("SELECT COUNT(*) AS n FROM documents WHERE case_id=?", (case["id"],)).fetchone()["n"]
     if case["explanation"] and docs:

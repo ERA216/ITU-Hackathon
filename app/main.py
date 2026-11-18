@@ -203,7 +203,7 @@ def ensure_demo(force: bool = False) -> bool:
     stale = row is None or _now() - datetime.fromisoformat(row["value"]) > timedelta(hours=DEMO_TTL_HOURS)
     if not (force or stale):
         return False
-    seed.populate(conn, evaluate=DEMO_HISTORY, with_history=DEMO_HISTORY, reset=True)
+    seed.populate(conn, evaluate=DEMO_HISTORY, with_history=DEMO_HISTORY, reset=True, with_business=False)
     conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('history',?)", ("1" if DEMO_HISTORY else "0",))
     shutil.rmtree(UPLOADS, ignore_errors=True)
     return True
@@ -400,6 +400,8 @@ def client_feed(cid: int, s: dict = Depends(session)):
     return {"id": c["id"], "name": c["name"], "balance": c["balance"], "held": held, "frozen": frozen,
             "available": max(0, c["balance"] - held - frozen), "status": c["status"], "feed": feed,
             "loan": _loan_view(cid) if c["status"] != "blocked" else None,
+            "kind": c["kind"], "activity": c["activity"],
+            "rental": _rental_view(cid) if c["kind"] == "ip" and c["status"] != "blocked" else None,
             "call": _call_info(cid),
             "complaints": _complaints_view(cid),
             "self_report": _self_report_view(cid),
@@ -432,7 +434,8 @@ def _incoming_flags(cid: int, r) -> dict:
     inc = _incoming_row(r["id"])
     complained = bool(conn.execute("SELECT 1 FROM complaints WHERE transfer_id=?", (inc["id"],)).fetchone())
     flags = {"warning": False, "complained": complained, "returned": _returned(inc["id"])}
-    if (inc["status"] != "done" or inc["return_of"] or flags["returned"]
+    # ИП получает деньги от незнакомых людей каждый день: это выручка, предупреждать о «чужих деньгах» не нужно.
+    if (inc["status"] != "done" or inc["return_of"] or flags["returned"] or _client(cid)["kind"] == "ip"
             or engine.find_forward(conn, cid, inc)):
         return flags
     fresh = _now() - datetime.fromisoformat(inc["created_at"]) <= timedelta(hours=engine.LOOKBACK_HOURS)
@@ -462,9 +465,10 @@ def _intercept_view(case) -> dict:
             "case_status": case["status"], "score": case["score"],
             "reasons": i18n.reasons(json.loads(case["reasons"])),
             "amount": tr["amount"], "receiver": i18n.name(tr["receiver_id"], tr["name"]),
-            # Что показать клиенту в окне остановки: схема с чужими деньгами, деньги из свежего кредита,
+            # Что показать клиенту в окне остановки: схема с чужими деньгами, «аренда ИП», деньги из свежего кредита,
             # звонок или подозрительный получатель.
-            "kind": "scheme" if inc else ("loan" if "loan_forward" in codes else
+            "kind": "scheme" if inc else ("rental" if "ip_rental" in codes else
+                                          "loan" if "loan_forward" in codes else
                                           "call" if "suspicious_call" in codes else
                                           "message" if "scam_message" in codes else "grey"),
             "loan": loan,
@@ -883,6 +887,8 @@ def _case_view(case) -> dict:
     first = json.loads(case["reasons"])[0].get("code")
     if first == "self_report":
         summary = t("summary_self")
+    elif first == "ip_rental":
+        summary = t("summary_rental")
     elif out:
         gap = int((datetime.fromisoformat(out["created_at"]) - datetime.fromisoformat(inc["created_at"])).total_seconds() // 60)
         summary = t("summary", inc=_money(inc["amount"]), gap=_minutes_text(gap), out=_money(out["amount"]))
@@ -1300,6 +1306,25 @@ def guardian_cancel_pending(tid: int, s: dict = Depends(as_client)):
     return _cancel_pending(tr, f"client:{s['client_id']}")
 
 
+# ---------- «Аренда ИП»: счётом предпринимателя пользуется другой человек ----------
+
+def _rental_view(cid: int) -> dict | None:
+    """Предупреждение владельцу ИП: деньги многих незнакомых людей сразу уходят частным лицам."""
+    sig = engine.rental_signal(conn, cid, _now())
+    return {k: sig[k] for k in ("payers", "inflow", "share")} if sig else None
+
+
+def _rental_accounts() -> list[dict]:
+    """Счета ИП с признаками «аренды»: для вкладки сотрудника банка."""
+    now, out = _now(), []
+    for c in conn.execute("SELECT * FROM clients WHERE kind='ip' ORDER BY id").fetchall():
+        sig = engine.rental_signal(conn, c["id"], now)
+        if sig:
+            out.append({"client_id": c["id"], "name": c["name"], "activity": c["activity"], "status": c["status"],
+                        "opened": c["account_opened_at"]} | sig)
+    return sorted(out, key=lambda x: (x["status"] == "blocked", -x["inflow"]))
+
+
 # ---------- Свежий кредит: схема «встречный кредит» ----------
 # Кредит — деньги банка, а не перевод между клиентами: выдача и погашение меняют баланс напрямую
 # и в движке не считаются «входящим от незнакомца».
@@ -1384,6 +1409,8 @@ def check_message(body: MessageIn, s: dict = Depends(as_client)):
 # ---------- Предупреждение о вербовке в дропперы ----------
 
 def _recruit_view(cid: int) -> dict | None:
+    if _client(cid)["kind"] == "ip":
+        return None                    # для ИП вместо вербовки проверяется «аренда ИП»
     sig = engine.recruitment_signal(conn, cid, _now())
     if not sig:
         return None
@@ -1604,6 +1631,8 @@ def _analyst_case(case_id: int) -> dict:
     return _analyst_row(case) | {
         "account_opened_at": client["account_opened_at"],
         "client_status": client["status"],
+        "client_kind": client["kind"], "activity": client["activity"],
+        "rental": engine.rental_signal(conn, client["id"], _now()) if client["kind"] == "ip" else None,
         "incoming": _transfer_view(case["incoming_transfer_id"]),
         "outgoing": _transfer_view(case["transfer_id"]),
         "reasons": json.loads(case["reasons"]),
@@ -1743,27 +1772,49 @@ def _linked_for(case) -> dict | None:
                                     for r in rows]}
 
 
-@app.post("/analyst/accounts/{cid}/suspend")
-def suspend_account(cid: int, s: dict = Depends(as_analyst)):
-    """Приостановить счёт, который всплывает в нескольких случаях: создаётся случай, его видит и клиент."""
-    found = next((a for a in metrics.linked_accounts(conn) if a["client_id"] == cid), None)
-    if not found:
-        raise HTTPException(404, "Счёт не связан с несколькими случаями")
+def _suspend(cid: int, reason: dict, text: str) -> dict:
+    """Сотрудник приостанавливает счёт целиком: создаётся случай блокировки, его видит и клиент."""
     if conn.execute("""SELECT 1 FROM cases WHERE client_id=? AND kind='block'
                        AND status IN ('open','under_review')""", (cid,)).fetchone():
         raise HTTPException(409, "По этому счёту уже есть нерешённая блокировка")
     inc = conn.execute("SELECT id FROM transfers WHERE receiver_id=? ORDER BY created_at DESC, id DESC LIMIT 1",
                        (cid,)).fetchone()
-    reasons = [{"code": "linked", "points": 40,
-                "text": f"Счёт получал деньги от {found['sources']} разных клиентов в подозрительных случаях"}]
     case_id = conn.execute(
         """INSERT INTO cases(client_id,transfer_id,incoming_transfer_id,kind,score,reasons,created_at)
-           VALUES(?,NULL,?,'block',40,?,?)""",
-        (cid, inc["id"], json.dumps(reasons, ensure_ascii=False), _now().isoformat())).lastrowid
+           VALUES(?,NULL,?,'block',?,?,?)""",
+        (cid, inc["id"], reason["points"], json.dumps([reason], ensure_ascii=False), _now().isoformat())).lastrowid
     _refresh_status(cid)
-    log("analyst", "blocked", case_id, inc["id"],
-        text=f"Операции приостановлены сотрудником: счёт связан с {len(found['cases'])} случаями")
+    log("analyst", "blocked", case_id, inc["id"], text=text)
     return _analyst_case(case_id)
+
+
+@app.post("/analyst/accounts/{cid}/suspend")
+def suspend_account(cid: int, s: dict = Depends(as_analyst)):
+    """Приостановить счёт, который всплывает в нескольких случаях."""
+    found = next((a for a in metrics.linked_accounts(conn) if a["client_id"] == cid), None)
+    if not found:
+        raise HTTPException(404, "Счёт не связан с несколькими случаями")
+    return _suspend(cid, {"code": "linked", "points": 40,
+                          "text": f"Счёт получал деньги от {found['sources']} разных клиентов в подозрительных случаях"},
+                    f"Операции приостановлены сотрудником: счёт связан с {len(found['cases'])} случаями")
+
+
+@app.get("/analyst/business")
+def analyst_business(s: dict = Depends(as_analyst)):
+    """Счета ИП с признаками «аренды ИП»."""
+    return _rental_accounts()
+
+
+@app.post("/analyst/business/{cid}/suspend")
+def suspend_rental(cid: int, s: dict = Depends(as_analyst)):
+    """Приостановить счёт ИП, похожий на арендованный."""
+    sig = engine.rental_signal(conn, cid, _now())
+    if not sig:
+        raise HTTPException(404, "Признаков «аренды ИП» по этому счёту нет")
+    return _suspend(cid, {"code": "ip_rental", "points": 60,
+                          "text": f"Похоже на «аренду ИП»: за неделю деньги от {sig['payers']} незнакомых людей, "
+                                  f"{sig['share']}% ушло частным лицам"},
+                    "Операции приостановлены сотрудником: признаки «аренды ИП»")
 
 
 @app.post("/analyst/cases/{case_id}/escalate")

@@ -5,6 +5,8 @@ import json
 import statistics
 from datetime import datetime, timedelta
 
+from . import engine
+
 KEPT = ("returned", "cancelled", "withdrawn", "guardian_cancelled")   # остановленный перевод так и не ушёл
 
 
@@ -78,6 +80,7 @@ def compute(conn, now: datetime, days: int = 30) -> dict:
         **_cooling_and_messages(conn, since),
         **_compensation(conn, since),
         **_loans(conn, since),
+        **_rental(conn, since, now),
         "clearances": conn.execute("SELECT COUNT(*) AS n FROM clearances WHERE issued_at >= ?", (since,)).fetchone()["n"],
         "blocks": len(blocks),
         "appeals": len(appeals),
@@ -151,6 +154,16 @@ def _loans(conn, since: str) -> dict:
            WHERE k.kind='intercept' AND k.created_at >= ? AND k.reasons LIKE '%"loan_forward"%'""", (since,)).fetchall()
     return {"loan_stops": len(rows), "loan_saved": sum(r["amount"] for r in rows if r["status"] in KEPT),
             "loans_repaid": conn.execute("SELECT COUNT(*) AS n FROM loans WHERE repaid_at >= ?", (since,)).fetchone()["n"]}
+
+
+def _rental(conn, since: str, now: datetime) -> dict:
+    """«Аренда ИП»: сколько счетов ИП сейчас с признаками, сколько переводов остановлено и счетов приостановлено."""
+    count = lambda kind: conn.execute(   # noqa: E731
+        f"""SELECT COUNT(*) AS n FROM cases WHERE kind='{kind}' AND created_at >= ? AND reasons LIKE '%"ip_rental"%'""",
+        (since,)).fetchone()["n"]
+    accounts = sum(1 for r in conn.execute("SELECT id FROM clients WHERE kind='ip'").fetchall()
+                   if engine.rental_signal(conn, r["id"], now))
+    return {"rental_accounts": accounts, "rental_stops": count("intercept"), "rental_suspended": count("block")}
 
 
 def _cooling_and_messages(conn, since: str) -> dict:

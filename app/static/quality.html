@@ -83,6 +83,15 @@
     <div id="scen"></div>
   </div>
 
+  <div class="card" id="bizCard" hidden>
+    <h2>«Аренда ИП»: счета предпринимателей</h2>
+    <p class="muted">Отдельные синтетические счета ИП в тех же наборах данных. Признаки: за неделю платили 3 и больше незнакомых частных лиц; 70% и больше всех поступлений от частных лиц сразу (из денег, пришедших за последние 48 часов) ушло частным лицам, которым ИП раньше не переводил; это необычно для счёта — ИП почти не работал, открыт недавно или раньше частным лицам деньги почти не уходили.</p>
+    <h2 style="margin-top:14px">Какие счета отмечены хотя бы раз за 45 дней</h2>
+    <div id="bizAccounts"></div>
+    <h2 style="margin-top:14px">Какие платежи ИП останавливает движок</h2>
+    <div id="bizPayments"></div>
+  </div>
+
   <div class="card">
     <h2>Как читать эти цифры</h2>
     <ul class="notes">
@@ -187,6 +196,20 @@ fetch('/quality.json').then(r => r.json()).then(q => {
         <td class="num">${s.stopped.toLocaleString('ru-RU')} из ${s.total.toLocaleString('ru-RU')}<br><span class="muted">${pct(share, share < 1 ? 2 : 0)}</span></td>
         <td class="barcell"><div class="bar ${s.group === 'Честный' ? 'honest' : ''}" style="width:${Math.max(share, 0.3)}%"></div></td></tr>`;
     }).join('') + '</table>';
+  if (q.business) {
+    // Строки «Арендованный» — хорошо, когда отмечено или остановлено всё; строки «Честный» — когда почти ничего.
+    const rows = (items, hit, label) => '<table><tr><th>Ситуация</th><th class="num">' + label + '</th><th class="barcell"></th></tr>' +
+      items.filter(s => s.total).map(s => {
+        const share = 100 * s[hit] / s.total;
+        const money = s.amount ? `<br><span class="muted">${pct(100 * s.amount_stopped / s.amount)} суммы</span>` : `<br><span class="muted">${pct(share)}</span>`;
+        return `<tr><td><span class="group">${esc(s.group)}</span><br>${esc(s.title)}</td>
+          <td class="num">${s[hit].toLocaleString('ru-RU')} из ${s.total.toLocaleString('ru-RU')}${money}</td>
+          <td class="barcell"><div class="bar ${s.group === 'Честный' ? 'honest' : ''}" style="width:${Math.max(share, 0.3)}%"></div></td></tr>`;
+      }).join('') + '</table>';
+    $('bizAccounts').innerHTML = rows(q.business.accounts, 'flagged', 'Отмечено');
+    $('bizPayments').innerHTML = rows(q.business.payments, 'stopped', 'Остановлено');
+    $('bizCard').hidden = false;
+  }
 }).catch(() => { $('lead').textContent = 'Нет файла с результатами. Запустите: python -m app.quality'; });
 </script>
 </body>

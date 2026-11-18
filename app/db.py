@@ -11,7 +11,9 @@ CREATE TABLE IF NOT EXISTS clients (
     account_opened_at TEXT NOT NULL,
     balance INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'active',      -- active | limited (заморожена спорная сумма) | blocked
-    true_kind TEXT NOT NULL DEFAULT 'honest'    -- honest | dropper (метка синтетики, банку неизвестна)
+    true_kind TEXT NOT NULL DEFAULT 'honest',   -- honest | dropper (метка синтетики, банку неизвестна)
+    kind TEXT NOT NULL DEFAULT 'person',        -- person: частное лицо | ip: индивидуальный предприниматель
+    activity TEXT                               -- вид деятельности ИП
 );
 CREATE TABLE IF NOT EXISTS transfers (
     id INTEGER PRIMARY KEY,
@@ -141,7 +143,7 @@ CREATE TABLE IF NOT EXISTS documents (
 """
 
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 
 def connect(path: str | None = None) -> sqlite3.Connection:

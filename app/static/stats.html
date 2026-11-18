@@ -72,7 +72,7 @@
   </section>
 
   <section class="group"><h2>Профилактика</h2>
-    <p class="muted">Только действия в демо: в смоделированной истории периода охлаждения, кредитов и проверок сообщений нет.</p>
+    <p class="muted">Только действия в демо: в смоделированной истории периода охлаждения, кредитов, счетов ИП и проверок сообщений нет.</p>
     <div class="tiles" id="prevent"></div></section>
   <section class="group"><h2>Нагрузка на сотрудников</h2><div class="tiles" id="load"></div></section>
   <section class="group"><h2>Ошибки системы</h2><div class="tiles" id="errors"></div></section>
@@ -145,6 +145,7 @@ function drawBars(host, data) {
   $('prevent').innerHTML =
     tile('Отменено в период охлаждения', compact(m.cooling_saved), `${num(m.cooling_cancelled)} из ${num(m.cooling)} отложенных крупных первых переводов`) +
     tile('Остановлено денег из свежего кредита', compact(m.loan_saved), `${num(m.loan_stops)} остановок, кредитов вернули банку: ${num(m.loans_repaid)}`) +
+    tile('Счетов ИП с признаками аренды', num(m.rental_accounts), `остановлено переводов: ${num(m.rental_stops)}, приостановлено счетов: ${num(m.rental_suspended)}`) +
     tile('Проверено сообщений', num(m.message_checks), `похожи на схемы мошенников: ${num(m.message_danger)}`);
   $('load').innerHTML =
     tile('Остановлено переводов', num(m.stops), `ждут решения сейчас: ${num(m.pending_stops)}`) +

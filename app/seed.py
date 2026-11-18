@@ -20,8 +20,139 @@ FIRST = ["Айдана", "Нурлан", "Дина", "Ерлан", "Алия", "
          "Данияр", "Жанна", "Бекзат", "Асель", "Руслан", "Камила", "Олжас", "Анна", "Игорь"]
 LAST = ["А.", "Б.", "К.", "М.", "Н.", "С.", "Т.", "Ж.", "О.", "Е."]
 
+# Счета ИП: сколько каких. Честные: магазин (платит поставщикам), посредник (платит постоянным частным
+# поставщикам), скупка (каждый раз платит новым частным лицам, но работает давно), новый магазин (открыт
+# недавно, однажды платит частному лицу за ремонт). Арендованные: «спящий» ИП, новый ИП и ИП, который
+# до аренды работал как обычный магазин (такие правила не ловят, это видно на странице качества).
+BIZ_TYPES = {"shop": 10, "agent": 3, "buyer": 3, "new_shop": 6, "rent_quiet": 5, "rent_young": 3, "rent_active": 3}
+BIZ_HONEST = ("shop", "agent", "buyer", "new_shop")
+ACTIVITIES = ["Розничная торговля одеждой", "Продажа электроники", "Кафе", "Салон красоты",
+              "Продажа автозапчастей", "Цветочный магазин", "Скупка и продажа техники"]
 
-def generate(rng: random.Random, now: datetime):
+
+def generate_business(rng: random.Random, now: datetime, first_id: int):
+    """ИП на синтетике. Свои клиенты (покупатели, поставщики, владельцы, карты дропперов) и свой генератор
+    случайных чисел: переводы частных лиц из generate() и цифры качества по ним от этого не меняются."""
+    start = now - timedelta(days=DAYS)
+    clients, events = [], []
+    ids = iter(range(first_id, first_id + 100_000))
+
+    def client(kind, opened, true_kind="honest", label=None):
+        cid = next(ids)
+        assert cid < 1001, "синтетические клиенты не должны занимать номера демо-персонажей (1001 и дальше)"
+        c = {"id": cid, "opened": opened, "young": False, "kind": true_kind, "type": kind, "label": label,
+             "name": f"{'ИП ' if kind == 'ip' else ''}{rng.choice(FIRST)} {rng.choice(LAST)}",
+             "activity": rng.choice(ACTIVITIES) if kind == "ip" else None}
+        clients.append(c)
+        return c["id"]
+
+    def old():
+        return now - timedelta(days=rng.randint(DAYS + 200, 2500))
+
+    buyers = [client("person", old()) for _ in range(150)]
+    suppliers = [client("ip", old(), label="supplier") for _ in range(5)]
+    mules = [client("person", now - timedelta(days=rng.randint(5, 60)), "dropper") for _ in range(12)]
+
+    def sales(ip, t0, t1, per_day):
+        """Оплаты покупателей, в среднем per_day в день. Возвращает [(время, сумма)]."""
+        income, t = [], t0
+        while True:
+            t += timedelta(hours=rng.expovariate(per_day / 24))
+            if t >= t1:
+                return income
+            a = rng.randrange(3000, 60000, 500)
+            events.append((t, rng.choice(buyers), ip, a, "biz_sale"))
+            income.append((t, a))
+
+    def payouts(ip, income, t0, t1, every, share, receivers, scen):
+        """Каждые every дней ИП отдаёт долю share выручки за этот период получателям из receivers()."""
+        t = t0
+        while True:
+            t_next = t + timedelta(days=rng.uniform(*every))
+            if t_next >= t1:
+                return
+            got = sum(a for at, a in income if t <= at < t_next)
+            if got:
+                parts = receivers()
+                for r in parts:
+                    events.append((t_next + timedelta(minutes=rng.randint(1, 600)), ip, r,
+                                   max(1000, int(got * rng.uniform(*share) / len(parts))), scen))
+            t = t_next
+
+    def honest_shop(ip, t0, label):
+        owner = client("person", old())
+        events.append((t0 + timedelta(hours=rng.randint(1, 30)), owner, ip, rng.randrange(20000, 100000, 1000),
+                       "biz_owner_in"))
+        income = sales(ip, t0 + timedelta(days=2), now, rng.uniform(1.5, 3.5))
+        if label in ("shop", "new_shop"):
+            mine = rng.sample(suppliers, rng.randint(1, 2))
+            payouts(ip, income, t0 + timedelta(days=2), now, (5, 9), (0.45, 0.7), lambda: [rng.choice(mine)], "ipo_supplier")
+            payouts(ip, income, t0 + timedelta(days=2), now, (12, 16), (0.1, 0.2), lambda: [owner], "ipo_owner")
+        elif label == "agent":
+            regular = [client("person", old()) for _ in range(6)]
+            for r in regular:           # постоянные поставщики знакомы с самого начала
+                events.append((t0 + timedelta(hours=rng.randint(1, 48)), ip, r, rng.randrange(5000, 20000, 500), "ipo_agent"))
+            payouts(ip, income, t0 + timedelta(days=3), now, (2, 4), (0.6, 0.85),
+                    lambda: rng.sample(regular, rng.randint(1, 2)), "ipo_agent")
+        else:                           # скупка: каждый раз новые частные лица
+            payouts(ip, income, t0 + timedelta(days=2), now, (2, 4), (0.55, 0.85),
+                    lambda: [client("person", old()) for _ in range(rng.randint(1, 2))], "ipo_buyer")
+        if label == "new_shop":         # однажды платит частному лицу за ремонт помещения
+            at = t0 + timedelta(days=rng.uniform(10, max(11, (now - t0).days - 1)))
+            week = sum(a for t, a in income if at - timedelta(days=7) <= t < at)
+            if week:
+                events.append((at, ip, client("person", old()), int(week * rng.uniform(0.2, 0.6)), "ipo_contractor"))
+
+    def rented(ip, burst):
+        """Доступ к счёту передали: деньги обманутых людей приходят и почти сразу уходят на карты дропперов."""
+        t, pending, cards = burst, 0, rng.sample(mules, rng.randint(1, 3))
+        for n in range(rng.randint(6, 15)):
+            t += timedelta(hours=rng.uniform(1, 12))
+            a = rng.randrange(20000, 250000, 1000)
+            events.append((t, rng.choice(buyers), ip, a, "biz_victim"))
+            pending += a
+            if rng.random() < 0.45:
+                events.append((t + timedelta(minutes=rng.randint(20, 360)), ip, rng.choice(cards),
+                               int(pending * rng.uniform(0.85, 0.98)), "ipo_rent"))
+                pending = 0
+        if pending:
+            events.append((t + timedelta(minutes=rng.randint(20, 360)), ip, rng.choice(cards),
+                           int(pending * rng.uniform(0.85, 0.98)), "ipo_rent"))
+
+    for label, n in BIZ_TYPES.items():
+        for _ in range(n):
+            if label == "new_shop":
+                opened = now - timedelta(days=rng.randint(20, 80))
+                honest_shop(client("ip", opened, label=label), opened, label)
+                continue
+            if label in ("shop", "agent", "buyer"):
+                honest_shop(client("ip", old(), label=label), start, label)
+                continue
+            # Всплеск целиком в оцениваемом периоде и закончился больше недели назад: в демо и тестах
+            # синтетические ИП не попадают в текущий список сотрудника.
+            burst = now - timedelta(days=rng.uniform(16, EVAL_DAYS - 12))
+            if label == "rent_quiet":
+                ip = client("ip", old(), "dropper", label)
+                for _ in range(rng.randint(0, 2)):      # почти без оборота: редкие мелкие пополнения
+                    events.append((start + timedelta(days=rng.uniform(0, 20)), client("person", old()), ip,
+                                   rng.randrange(1000, 5000, 500), "biz_owner_in"))
+            elif label == "rent_young":
+                opened = burst - timedelta(days=rng.randint(10, 40))
+                ip = client("ip", opened, "dropper", label)
+                events.append((opened + timedelta(hours=rng.randint(2, 30)), client("person", old()), ip,
+                               rng.randrange(2000, 10000, 500), "biz_owner_in"))
+            else:                                        # до аренды работал как обычный магазин
+                ip = client("ip", old(), "dropper", label)
+                owner = client("person", old())
+                events.append((start + timedelta(hours=5), owner, ip, 50000, "biz_owner_in"))
+                income = sales(ip, start + timedelta(days=1), burst, rng.uniform(1.5, 3))
+                mine = [rng.choice(suppliers)]
+                payouts(ip, income, start + timedelta(days=1), burst, (5, 9), (0.45, 0.7), lambda: mine, "ipo_supplier")
+            rented(ip, burst)
+    return clients, [e for e in events if e[0] <= now]
+
+
+def generate(rng: random.Random, now: datetime, biz_seed: int | None = None):
     start = now - timedelta(days=DAYS)
     clients = []
     for i in range(1, N_CLIENTS + 1):
@@ -91,30 +222,42 @@ def generate(rng: random.Random, now: datetime):
         events.append((t0, s, u, a, "benign_in"))
         events.append((t0 + timedelta(minutes=rng.randint(10, 600)), u, s, a, "benign_return"))
 
+    if biz_seed is not None:
+        biz_clients, biz_events = generate_business(random.Random(biz_seed * 7919 + 101), now, N_CLIENTS + 1)
+        clients += biz_clients
+        events += biz_events
     events.sort(key=lambda e: e[0])
     return clients, events
 
 
 def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = True, reset: bool = False,
-             with_history: bool = False) -> dict:
+             with_history: bool = False, with_business: bool = True) -> dict:
     """Заполняет базу. evaluate=True дополнительно проигрывает переводы через движок и считает качество.
 
     with_history=True добавляет историю случаев за 30 дней для панели эффективности (см. app/history.py).
+    with_business=True добавляет синтетические счета ИП для проверки правил «аренды ИП» (страница качества);
+    демо-серверу они не нужны, без них он запускается быстрее.
     """
     if reset:
         for table in ("loans", "self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
             conn.execute(f"DELETE FROM {table}")
     now = (now or clock.now()).replace(microsecond=0)
     rng = random.Random(seed)
-    clients, events = generate(rng, now)
+    clients, events = generate(rng, now, biz_seed=seed if with_business else None)
     conn.executemany(
-        "INSERT INTO clients(id,name,account_opened_at,balance,true_kind) VALUES(?,?,?,?,?)",
-        [(c["id"], c["name"], c["opened"].isoformat(), rng.randrange(20000, 900000, 1000), c["kind"])
-         for c in clients])
+        "INSERT INTO clients(id,name,account_opened_at,balance,true_kind,kind,activity) VALUES(?,?,?,?,?,?,?)",
+        [(c["id"], c["name"], c["opened"].isoformat(), rng.randrange(20000, 900000, 1000), c["kind"],
+          c.get("type", "person"), c.get("activity")) for c in clients])
 
     stats = {"tri": 0, "tri_caught": 0, "honest": 0, "honest_held": 0, "clients": len(clients), "events": len(events),
-             "scored": [], "held": [], "passed": []}
+             "scored": [], "held": [], "passed": [], "ip_scored": [], "now": now,
+             "ip_labels": {c["id"]: c["label"] for c in clients if c.get("type") == "ip"}}
     for t, s, r, amount, scen in events:
+        if evaluate and scen.startswith("ipo_") and t >= now - timedelta(days=EVAL_DAYS):
+            # Платежи ИП: останавливает ли движок транзит арендованного ИП и не мешает ли честным.
+            res = engine.evaluate(conn, s, r, amount, t)
+            key = f"ipo_{stats['ip_labels'][s]}" if scen == "ipo_rent" else scen   # транзит — по типу арендованного ИП
+            stats["ip_scored"].append((key, res["decision"] == "hold", amount))
         outgoing = scen == "normal" or scen.startswith(("tri_out", "tri_split", "tri_late", "benign_s",
                                                          "benign_n", "benign_r"))
         if evaluate and outgoing and t >= now - timedelta(days=EVAL_DAYS):
@@ -177,10 +320,14 @@ def _demo_personas(conn, now: datetime):
         (1011, "Оптовый склад (поставщик Данияра)", now - timedelta(days=1500), 320000, "honest"),
         (1012, "Тимур (студент, отдал карту «работодателю»)", now - timedelta(days=210), 6000, "honest"),
         (1013, "Болат (взял кредит по звонку «из банка»)", now - timedelta(days=1500), 23000, "honest"),
+        (1014, "ИП Нурлан (сдал ИП «в аренду»)", now - timedelta(days=800), 15000, "dropper"),
+        (1015, "ИП Асель (магазин одежды)", now - timedelta(days=1100), 40000, "honest"),
     ]
     conn.executemany(
         "INSERT INTO clients(id,name,account_opened_at,balance,true_kind) VALUES(?,?,?,?,?)",
         [(i, n, o.isoformat(), b, k) for i, n, o, b, k in rows])
+    conn.executemany("UPDATE clients SET kind='ip', activity=? WHERE id=?", [
+        ("Оптовая торговля продуктами", 1011), ("Розничная торговля одеждой", 1014), ("Магазин одежды", 1015)])
     tr = [
         (1004, 1001, 15000, now - timedelta(days=200), "demo"),
         (1004, 1001, 20000, now - timedelta(days=9), "demo"),
@@ -253,6 +400,36 @@ def _demo_personas(conn, now: datetime):
                                         ((1013, 57), 8000), ((44, 1013), 120000), ((1013, 57), 9500)]):
         conn.execute("INSERT INTO transfers(sender_id,receiver_id,amount,created_at,scenario) VALUES(?,?,?,?,?)",
                      (*pair, amount, (now - timedelta(days=170 - 28 * n)).isoformat(), "demo"))
+
+    # Нурлан полгода назад торговал одеждой, потом ИП «спал». Три дня назад он за процент передал доступ к счёту:
+    # деньги семи незнакомых людей пришли и почти сразу ушли на карты частных лиц. Полчаса назад пришла ещё оплата.
+    def tr_at(s, r, amount, at, scen="demo"):
+        conn.execute("INSERT INTO transfers(sender_id,receiver_id,amount,created_at,scenario) VALUES(?,?,?,?,?)",
+                     (s, r, amount, at.isoformat(), scen))
+    for n, (buyer, amount) in enumerate([(111, 18000), (112, 32000), (113, 15500), (114, 41000), (115, 26000)]):
+        tr_at(buyer, 1014, amount, now - timedelta(days=200 - 15 * n))
+    tr_at(1014, 1011, 30000, now - timedelta(days=170))
+    tr_at(1014, 1011, 25000, now - timedelta(days=130))
+    for buyer, amount, hours in [(101, 120000, 70), (102, 95000, 62), (103, 210000, 50), (104, 60000, 44),
+                                 (105, 150000, 30), (106, 85000, 20), (107, 130000, 9)]:
+        tr_at(buyer, 1014, amount, now - timedelta(hours=hours), "demo_in")
+    tr_at(1014, 290, 400000, now - timedelta(hours=43), "demo_out")
+    tr_at(1014, 292, 350000, now - timedelta(hours=8), "demo_out")
+    tr_at(108, 1014, 180000, now - timedelta(minutes=30), "demo_in")
+
+    # Асель — честный магазин: покупатели платят каждый день, за последнюю неделю чаще, деньги уходят поставщику.
+    # Незнакомых плательщиков много, но это выручка: «арендой ИП» это не считается.
+    income = 0
+    for d in range(80, 0, -1):
+        for k in range(1 if d > 7 else 2):
+            if d > 7 and d % 2:
+                continue
+            amount = 8000 + (d * 7919 + k * 104729) % 32000 // 500 * 500
+            tr_at(120 + (d * 2 + k) % 160, 1015, amount, now - timedelta(days=d, hours=3 + 5 * k))
+            income += amount
+        if d % 10 == 0:
+            tr_at(1015, 1011, int(income * 0.55) // 1000 * 1000, now - timedelta(days=d, hours=-6))
+            income = 0
 
     # Имитация базы Антифрод-центра: «чёрный» список — подтверждённые мошенники, «серый» — подозрительные.
     conn.executemany("INSERT INTO afc_list(client_id,list,added_at,note) VALUES(?,?,?,?)", [

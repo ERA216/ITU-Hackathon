@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-13T21:43:04",
+ "generated_at": "2026-11-18T14:10:47",
  "seeds": 10,
  "threshold": 85,
  "transfers_per_seed": 6026,
@@ -289,5 +289,132 @@
    "total": 56895,
    "stopped": 19
   }
- ]
+ ],
+ "business": {
+  "accounts": [
+   {
+    "key": "rent_quiet",
+    "group": "Арендованный",
+    "title": "ИП почти не работал, потом пошёл транзит",
+    "total": 50,
+    "flagged": 50
+   },
+   {
+    "key": "rent_young",
+    "group": "Арендованный",
+    "title": "ИП открыт недавно, сразу транзит",
+    "total": 30,
+    "flagged": 30
+   },
+   {
+    "key": "rent_active",
+    "group": "Арендованный",
+    "title": "До аренды работал как обычный магазин",
+    "total": 30,
+    "flagged": 30
+   },
+   {
+    "key": "shop",
+    "group": "Честный",
+    "title": "Магазин: много покупателей, платит поставщикам",
+    "total": 100,
+    "flagged": 0
+   },
+   {
+    "key": "agent",
+    "group": "Честный",
+    "title": "Посредник: платит постоянным частным поставщикам",
+    "total": 30,
+    "flagged": 0
+   },
+   {
+    "key": "buyer",
+    "group": "Честный",
+    "title": "Скупка: каждый раз платит новым частным лицам",
+    "total": 30,
+    "flagged": 0
+   },
+   {
+    "key": "new_shop",
+    "group": "Честный",
+    "title": "Новый магазин, однажды заплатил частному лицу за ремонт",
+    "total": 60,
+    "flagged": 1
+   }
+  ],
+  "payments": [
+   {
+    "key": "ipo_rent_quiet",
+    "group": "Арендованный",
+    "title": "Транзит: ИП почти не работал",
+    "total": 245,
+    "stopped": 196,
+    "amount": 61667905,
+    "amount_stopped": 53036890
+   },
+   {
+    "key": "ipo_rent_young",
+    "group": "Арендованный",
+    "title": "Транзит: ИП открыт недавно",
+    "total": 138,
+    "stopped": 115,
+    "amount": 37766813,
+    "amount_stopped": 33678140
+   },
+   {
+    "key": "ipo_rent_active",
+    "group": "Арендованный",
+    "title": "Транзит: до аренды работал как магазин",
+    "total": 160,
+    "stopped": 63,
+    "amount": 38167316,
+    "amount_stopped": 15020070
+   },
+   {
+    "key": "ipo_supplier",
+    "group": "Честный",
+    "title": "Оплата поставщику",
+    "total": 1031,
+    "stopped": 0,
+    "amount": 321029464,
+    "amount_stopped": 0
+   },
+   {
+    "key": "ipo_owner",
+    "group": "Честный",
+    "title": "Перевод владельцу ИП",
+    "total": 467,
+    "stopped": 0,
+    "amount": 76947307,
+    "amount_stopped": 0
+   },
+   {
+    "key": "ipo_agent",
+    "group": "Честный",
+    "title": "Оплата постоянному частному поставщику",
+    "total": 679,
+    "stopped": 0,
+    "amount": 73714120,
+    "amount_stopped": 0
+   },
+   {
+    "key": "ipo_buyer",
+    "group": "Честный",
+    "title": "Скупка: оплата новому частному лицу",
+    "total": 671,
+    "stopped": 0,
+    "amount": 72824851,
+    "amount_stopped": 0
+   },
+   {
+    "key": "ipo_contractor",
+    "group": "Честный",
+    "title": "Новый магазин: оплата частному лицу за ремонт",
+    "total": 55,
+    "stopped": 0,
+    "amount": 12818437,
+    "amount_stopped": 0
+   }
+  ]
+ }
 }

@@ -9,7 +9,7 @@ import os
 import statistics
 import tempfile
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from . import clock, engine, seed
 
@@ -28,17 +28,49 @@ SCENARIOS = {
 }
 
 
+# Счета ИП: какие правила «аренды ИП» отметили и какие платежи ИП остановил движок.
+BIZ_ACCOUNTS = {
+    "rent_quiet": ("Арендованный", "ИП почти не работал, потом пошёл транзит"),
+    "rent_young": ("Арендованный", "ИП открыт недавно, сразу транзит"),
+    "rent_active": ("Арендованный", "До аренды работал как обычный магазин"),
+    # Честные ИП
+    "shop": ("Честный", "Магазин: много покупателей, платит поставщикам"),
+    "agent": ("Честный", "Посредник: платит постоянным частным поставщикам"),
+    "buyer": ("Честный", "Скупка: каждый раз платит новым частным лицам"),
+    "new_shop": ("Честный", "Новый магазин, однажды заплатил частному лицу за ремонт"),
+}
+BIZ_PAYMENTS = {
+    "ipo_rent_quiet": ("Арендованный", "Транзит: ИП почти не работал"),
+    "ipo_rent_young": ("Арендованный", "Транзит: ИП открыт недавно"),
+    "ipo_rent_active": ("Арендованный", "Транзит: до аренды работал как магазин"),
+    "ipo_supplier": ("Честный", "Оплата поставщику"),
+    "ipo_owner": ("Честный", "Перевод владельцу ИП"),
+    "ipo_agent": ("Честный", "Оплата постоянному частному поставщику"),
+    "ipo_buyer": ("Честный", "Скупка: оплата новому частному лицу"),
+    "ipo_contractor": ("Честный", "Новый магазин: оплата частному лицу за ремонт"),
+}
+
+
 def held(score: int, has_incoming: bool, threshold: int) -> bool:
     return has_incoming and score >= threshold
 
 
+def business_flags(conn, labels: dict, now: datetime, days: int = seed.EVAL_DAYS) -> dict:
+    """Какие ИП правила «аренды» отметили хотя бы раз за последние дни (проверка в конце каждого дня)."""
+    return {cid: any(engine.rental_signal(conn, cid, now - timedelta(days=d)) for d in range(days))
+            for cid, label in labels.items() if label in BIZ_ACCOUNTS}
+
+
 def run() -> dict:
     tmp = tempfile.mkdtemp()
-    per_seed = []
+    per_seed, accounts, payments = [], [], []
     for s in SEEDS:
         conn, stats = seed.build(os.path.join(tmp, f"q{s}.db"), seed=s, verbose=False)
+        flags = business_flags(conn, stats["ip_labels"], stats["now"])
         conn.close()
         per_seed.append(stats["scored"])
+        accounts += [(stats["ip_labels"][cid], f) for cid, f in flags.items()]
+        payments += stats["ip_scored"]
 
     curve = []
     for t in THRESHOLDS:
@@ -70,6 +102,15 @@ def run() -> dict:
         "transfers_per_seed": round(statistics.mean(len(s) for s in per_seed)),
         "curve": curve,
         "by_scenario": by_scenario,
+        "business": {
+            "accounts": [{"key": k, "group": g, "title": title, "total": sum(1 for lb, _ in accounts if lb == k),
+                          "flagged": sum(1 for lb, f in accounts if lb == k and f)} for k, (g, title) in BIZ_ACCOUNTS.items()],
+            "payments": [{"key": k, "group": g, "title": title, "total": sum(1 for sc, _, _ in payments if sc == k),
+                          "stopped": sum(1 for sc, h, _ in payments if sc == k and h),
+                          "amount": sum(a for sc, _, a in payments if sc == k),
+                          "amount_stopped": sum(a for sc, h, a in payments if sc == k and h)}
+                         for k, (g, title) in BIZ_PAYMENTS.items()],
+        },
     }
 
 
@@ -86,3 +127,9 @@ if __name__ == "__main__":
     print(f"Среди остановок настоящих схем: {cur['precision'][0]}–{cur['precision'][2]}%")
     for r in data["by_scenario"]:
         print(f"  {r['group']:8} {r['title']}: остановлено {r['stopped']} из {r['total']}")
+    print("Аренда ИП, счета:")
+    for r in data["business"]["accounts"]:
+        print(f"  {r['group']:12} {r['title']}: отмечено {r['flagged']} из {r['total']}")
+    print("Аренда ИП, платежи:")
+    for r in data["business"]["payments"]:
+        print(f"  {r['group']:12} {r['title']}: остановлено {r['stopped']} из {r['total']}")

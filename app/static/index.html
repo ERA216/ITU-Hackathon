@@ -240,6 +240,7 @@
           <div class="muted" data-t="available"></div>
           <div class="balance" id="balance">…</div>
           <div class="muted" id="heldLine"></div>
+          <div class="muted" id="bizLine"></div>
           <div class="quick">
             <button data-go="pay"><span class="ic"><svg class="i" viewBox="0 0 24 24"><path d="M4 8h14"/><path d="m14 4 4 4-4 4"/><path d="M20 16H6"/><path d="m10 12-4 4 4 4"/></svg></span><span data-t="qaPay"></span></button>
             <button data-go="safe" data-focus="msgCard"><span class="ic"><svg class="i" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8"/><path d="M8 12h5"/></svg></span><span data-t="qaMsg"></span></button>
@@ -250,6 +251,7 @@
         <div id="callAlert"></div>
         <div id="coolAlerts"></div>
         <div id="loanCard"></div>
+        <div id="rentalCard"></div>
         <div id="guardAlerts"></div>
         <div id="alerts"></div>
         <div id="compCards"></div>
@@ -362,6 +364,10 @@ const T = {
               'Картасын «жұмыс берушіге» берді. «Қорғау» бөлімінде схемаға тартылғанын банкке өзі хабарлай алады.'],
   hint_1013: ['40 минут назад взял кредит 800 000 ₸: «служба безопасности банка» сказала, что так он отменит чужую заявку. Переведите эти деньги на «Безопасный счёт» — перевод остановится. Кредит можно вернуть банку с главной.',
               '40 минут бұрын 800 000 ₸ несие алды: «банктің қауіпсіздік қызметі» осылай бөтен өтінімнің күшін жоятынын айтты. Бұл ақшаны «Қауіпсіз шотқа» аударыңыз — аударым тоқтайды. Несиені басты беттен банкке қайтаруға болады.'],
+  hint_1014: ['Полгода назад торговал одеждой, потом ИП «спал». Три дня назад за процент передал доступ к счёту: деньги семи незнакомых людей сразу ушли на карты частных лиц. Переведите 150 000 ₸ на «Карту для возврата» — перевод остановится. Сотрудник видит счёт во вкладке «Аренда ИП».',
+              'Жарты жыл бұрын киім сатқан, сосын ЖК «ұйықтап» қалды. Үш күн бұрын пайызға шотқа кіруді беріп қойды: жеті бейтаныс адамның ақшасы бірден жеке тұлғалардың картасына кетті. «Қайтаруға арналған картаға» 150 000 ₸ аударыңыз — аударым тоқтайды. Қызметкер шотты «ЖК-ны жалға беру» бөлімінде көреді.'],
+  hint_1015: ['Честный магазин: за неделю заплатили 14 новых покупателей, деньги уходят поставщику. Это не «аренда ИП»: предупреждений нет. Заплатите поставщику (Оптовый склад) — перевод пройдёт.',
+              'Адал дүкен: бір аптада 14 жаңа сатып алушы төледі, ақша жеткізушіге кетеді. Бұл «ЖК-ны жалға беру» емес: ескерту жоқ. Жеткізушіге (Көтерме қойма) төлеңіз — аударым өтеді.'],
   who: ['Войти как', 'Кім ретінде кіру'],
   analystLink: ['Панель аналитика банка', 'Банк талдаушысының панелі'],
   available: ['Доступно', 'Қолжетімді'],
@@ -534,6 +540,15 @@ const T = {
   loanRepayOk: ['Кредит {m} возвращён банку и закрыт.', '{m} несие банкке қайтарылып, жабылды.'],
   guardKindLoan: ['Деньги из только что взятого кредита уходят на новый счёт. Похоже на схему «встречный кредит».',
                   'Жаңа ғана алынған несиенің ақшасы жаңа шотқа кетіп жатыр. «Қарсы несие» схемасына ұқсайды.'],
+  bizLine: ['Счёт ИП · {a}', 'ЖК шоты · {a}'],
+  rentalH: ['Похоже, счётом вашего ИП пользуется другой человек', 'Сіздің ЖК шотыңызды басқа адам пайдаланып жүрген сияқты'],
+  rentalText: ['За неделю частные лица заплатили на счёт ИП {m}, из них {n} человек раньше вам не платили. {p}% этих денег сразу ушло на карты частных лиц.',
+               'Бір аптада жеке тұлғалар ЖК шотына {m} төледі, олардың {n} адамы бұрын сізге төлемеген. Бұл ақшаның {p}% бірден жеке тұлғалардың картасына кетті.'],
+  rentalScheme: ['Так выглядит «аренда ИП»: доступ к счёту передают «за процент», а через него проводят деньги обманутых людей. Отвечает владелец ИП: счёт заблокируют, грозит уголовная ответственность. Если вы передали кому-то доступ к счёту или приложению, сообщите банку сами.',
+                 '«ЖК-ны жалға беру» осылай көрінеді: шотқа кіруді «пайызға» береді, ал ол арқылы алданған адамдардың ақшасын өткізеді. ЖК иесі жауап береді: шот бұғатталады, қылмыстық жауапкершілік қарастырылған. Шотқа немесе қосымшаға кіруді біреуге берсеңіз, банкке өзіңіз хабарлаңыз.'],
+  rentalReport: ['Сообщить банку', 'Банкке хабарлау'],
+  stopTextRental: ['Похоже, счётом ИП пользуется другой человек: за неделю на него заплатили много незнакомых людей, и деньги сразу уходят на карты частных лиц. Так работает «аренда ИП». Банк остановил перевод.',
+                   'ЖК шотын басқа адам пайдаланып жүрген сияқты: бір аптада оған көптеген бейтаныс адамдар төледі, ал ақша бірден жеке тұлғалардың картасына кетіп жатыр. «ЖК-ны жалға беру» осылай жұмыс істейді. Банк аударымды тоқтатты.'],
   coolH: ['Перевод уйдёт в {t}', 'Аударым {t} кетеді'],
   coolText: ['{m}, получатель: {r}. Крупный первый перевод новому получателю мы придерживаем на час. Если вас торопят, звонят от имени банка или полиции или просят никому не говорить, отмените его.',
              '{m}, алушы: {r}. Жаңа алушыға алғашқы ірі аударымды бір сағатқа ұстап тұрамыз. Сізді асықтырса, банк не полиция атынан қоңырау шалса немесе ешкімге айтпауды сұраса, оны болдырмаңыз.'],
@@ -724,6 +739,7 @@ async function load() {
   serverNow = c.now;
   $('balance').textContent = money(c.available);
   $('heldLine').textContent = [c.held ? tr('heldLine', {m: money(c.held)}) : '', c.frozen ? tr('frozenLine', {m: money(c.frozen)}) : ''].filter(Boolean).join(' ');
+  $('bizLine').textContent = c.kind === 'ip' ? tr('bizLine', {a: c.activity || ''}) : '';
   renderCall(c.call);
   // blocked: счёт закрыт целиком. limited: заморожена только спорная сумма, переводы знакомым работают.
   const blocked = c.status === 'blocked', restricted = blocked || c.status === 'limited';
@@ -742,6 +758,7 @@ async function load() {
   renderGuardRequests(c.guardian_requests || []);
   renderCooling(c.cooling || [], c.guardian_cooling || []);
   renderLoan(c.loan);
+  renderRental(c.rental);
   loadGuardian();
   const chosen = $('to').value;
   $('to').innerHTML = people.filter(p => p.id !== me).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
@@ -975,6 +992,21 @@ function renderLoan(loan) {
   if (loan) $('loanRepay').onclick = () => { $('loanRepay').disabled = true; repayLoan(loan.id); };
 }
 
+// «Аренда ИП»: деньги многих незнакомых людей сразу уходят на карты частных лиц.
+function renderRental(r) {
+  $('rentalCard').innerHTML = r ? `
+    <div class="alert recruit">
+      <h2>${tr('rentalH')}</h2>
+      <p>${esc(tr('rentalText', {n: r.payers, m: money(r.inflow), p: r.share}))}</p>
+      <p>${tr('rentalScheme')}</p>
+      <div class="actions"><button class="primary" id="rentalReport">${tr('rentalReport')}</button></div>
+    </div>` : '';
+  if (r) $('rentalReport').onclick = () => {
+    showTab('safe', 'selfCard');
+    if ($('srOpen') && !$('srOpen').hidden) $('srOpen').click();
+  };
+}
+
 // Проверка подозрительного сообщения: схема, что насторожило и что делать.
 $('msgCheck').onclick = async () => {
   $('msgCheck').disabled = true;
@@ -1021,9 +1053,9 @@ function askReport(btn) {
 function showStop(r) {
   held = r;
   // Текст окна зависит от причины: чужие деньги, звонок мошенника или подозрительный получатель.
-  $('stopText').textContent = tr({scheme: 'stopText', call: 'stopTextCall', grey: 'stopTextGrey', message: 'stopTextMessage', loan: 'stopTextLoan'}[r.kind] || 'stopText');
+  $('stopText').textContent = tr({scheme: 'stopText', call: 'stopTextCall', grey: 'stopTextGrey', message: 'stopTextMessage', loan: 'stopTextLoan', rental: 'stopTextRental'}[r.kind] || 'stopText');
   $('reasons').innerHTML = r.reasons.map(x => `<li>${esc(x.text)}</li>`).join('');
-  $('law').hidden = r.kind !== 'scheme';
+  $('law').hidden = r.kind !== 'scheme' && r.kind !== 'rental';
   $('repayLoan').hidden = !r.loan;
   if (r.loan) $('repayLoan').textContent = tr('loanRepay', {m: money(r.loan.amount)});
   $('ret').hidden = !r.safe_return;
@@ -1095,7 +1127,7 @@ function clearScreen() {
   $('feed').innerHTML = ''; $('balance').textContent = '…'; $('heldLine').textContent = '';
   $('recipientNote').innerHTML = ''; $('callAlert').innerHTML = '';
   $('guardAlerts').innerHTML = ''; $('guardianCard').innerHTML = ''; $('certCard').hidden = true;
-  $('coolAlerts').innerHTML = ''; $('loanCard').innerHTML = ''; $('msgText').value = ''; $('msgResult').innerHTML = ''; clearTimeout(coolTimer);
+  $('coolAlerts').innerHTML = ''; $('loanCard').innerHTML = ''; $('rentalCard').innerHTML = ''; $('bizLine').textContent = ''; $('msgText').value = ''; $('msgResult').innerHTML = ''; clearTimeout(coolTimer);
   $('compCards').innerHTML = ''; $('selfCard').hidden = true; selfKey = ''; selfMsg = '';
 }
 $('who').onchange = async () => { clearScreen(); showTab('home'); await loginAs(+$('who').value); load(); };

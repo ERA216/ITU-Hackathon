@@ -102,6 +102,9 @@
     <div class="tabs" role="tablist">
       <button data-tab="pending" aria-selected="true">Ждут решения</button><button data-tab="all">Все</button><button data-tab="linked">Связанные счета</button>
     </div>
+    <div class="tabs" role="tablist">
+      <button data-tab="business">Аренда ИП</button>
+    </div>
     <h2 id="queueTitle">Очередь</h2><div id="queue"></div>
   </div>
   <div id="detail"><div class="card muted">Выберите случай слева.</div></div>
@@ -139,6 +142,7 @@ document.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => {
 
 async function loadQueue() {
   if (tab === 'linked') return loadLinked();
+  if (tab === 'business') return loadBusiness();
   const all = await api('/analyst/cases');
   const waiting = all.filter(c => c.needs_decision);
   const q = tab === 'pending' ? waiting : all;
@@ -174,6 +178,24 @@ async function loadLinked() {
     catch (e) { b.disabled = false; alertBox(e.message); }
   });
 }
+// Счета ИП, похожие на арендованные: много незнакомых плательщиков, деньги сразу уходят частным лицам.
+async function loadBusiness() {
+  const L = await api('/analyst/business');
+  $('queueTitle').textContent = `Аренда ИП: ${L.length}`;
+  $('queue').innerHTML = (L.length ? '<p class="muted" style="margin:0 0 8px">Владелец ИП за процент передаёт доступ к счёту, через него проводят деньги обманутых людей. Честный магазин тоже получает деньги от незнакомцев, но платит поставщикам; здесь деньги сразу уходят на карты частных лиц.</p>' : '') +
+    L.map(a => `<div class="item" style="cursor:default">
+      <b>${esc(a.name)}</b>
+      <span class="muted">${esc(a.activity || 'ИП')} · счёту ${days(a.opened)} дн.</span>
+      <ul>${a.factors.map(f => `<li><span>${esc(f)}</span></li>`).join('')}</ul>
+      ${a.status === 'blocked' ? '<span class="pill organizer">Счёт приостановлен</span>'
+        : `<button class="act reject" style="margin-top:6px;padding:7px 10px" data-rent="${a.client_id}">Приостановить счёт</button>`}
+    </div>`).join('') || '<div class="card muted">Счетов ИП с признаками аренды нет.</div>';
+  $('queue').querySelectorAll('[data-rent]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { const c = await api(`/analyst/business/${b.dataset.rent}/suspend`, {}); await loadBusiness(); open(c.case_id); }
+    catch (e) { b.disabled = false; alertBox(e.message); }
+  });
+}
 function alertBox(text) { $('detail').insertAdjacentHTML('afterbegin', `<div class="note">${esc(text)}</div>`); }
 
 async function open(id) {
@@ -185,7 +207,7 @@ async function open(id) {
   $('detail').innerHTML = `
     <div class="card">
       <h2 style="font-size:19px">${esc(c.client)}</h2>
-      <div class="muted">${kind(c)} · случай №${c.case_id} · счёт открыт ${days(c.account_opened_at)} дн. назад</div>
+      <div class="muted">${kind(c)} · случай №${c.case_id} · ${c.client_kind === 'ip' ? `ИП${c.activity ? ', ' + esc(c.activity) : ''} · ` : ''}счёт открыт ${days(c.account_opened_at)} дн. назад</div>
       <p><span class="pill ${c.role.verdict}" style="font-size:14px;padding:4px 12px">${esc(c.role.label)}</span>
         ${c.overdue ? '<span class="pill late" style="font-size:14px;padding:4px 12px">Срок ответа прошёл</span>' : ''}</p>
       ${c.due_at && c.needs_decision ? `<div class="muted">Клиенту обещан ответ до ${when(c.due_at)}</div>` : ''}
@@ -228,6 +250,11 @@ async function open(id) {
       ${c.linked.status === 'blocked' ? ' Счёт уже приостановлен.' : ''}</p>
       ${c.linked.other_cases.length ? `<p class="muted">Другие случаи: ${c.linked.other_cases.map(o => `<button class="linkbtn" data-open="${o.id}">№${o.id} ${esc(o.name)}</button> (${esc(o.kind_text)})`).join(', ')}</p>` : ''}
       ${c.linked.status !== 'blocked' ? `<button class="act reject" data-suspend-card="${c.linked.client_id}" style="max-width:280px">Приостановить счёт ${esc(c.linked.name)}</button>` : ''}
+    </div>` : ''}
+    ${c.rental ? `<div class="card linked"><h2>Признаки «аренды ИП»</h2>
+      <ul>${c.rental.factors.map(f => `<li><span>${esc(f)}</span></li>`).join('')}</ul>
+      <p class="muted" style="margin:6px 0 0">Честный магазин тоже получает деньги от незнакомцев, но платит поставщикам. Если владелец ИП передал доступ к счёту, счёт стоит приостановить целиком.</p>
+      ${c.client_status !== 'blocked' && c.kind === 'intercept' ? `<button class="act reject" data-rent-card="${c.client_id}" style="max-width:280px;margin-top:10px">Приостановить счёт ИП</button>` : ''}
     </div>` : ''}
     ${c.guardian ? `<div class="card"><h2>Доверенное лицо клиента</h2>
       <p><b>${esc(c.guardian.name)}</b> · ${esc(GUARD[c.guardian.state] || c.guardian.state)}</p></div>` : ''}
@@ -272,6 +299,11 @@ async function open(id) {
   $('detail').querySelectorAll('[data-suspend-card]').forEach(b => b.onclick = async () => {
     b.disabled = true;
     try { const n = await api(`/analyst/accounts/${b.dataset.suspendCard}/suspend`, {}); open(n.case_id); }
+    catch (e) { b.disabled = false; alertBox(e.message); }
+  });
+  $('detail').querySelectorAll('[data-rent-card]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { const n = await api(`/analyst/business/${b.dataset.rentCard}/suspend`, {}); open(n.case_id); }
     catch (e) { b.disabled = false; alertBox(e.message); }
   });
   for (const [btn, path] of [['escalate', 'escalate'], ['refund', 'refund']]) if ($(btn)) $(btn).onclick = async () => {
