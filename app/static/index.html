@@ -39,6 +39,13 @@
   .note { border-radius:12px; padding:12px 14px; font-size:14px; margin-top:12px; }
   .note.ok { background:var(--ok-bg); color:var(--ok); }
   .note.err { background:var(--warn-bg); color:var(--warn); }
+  /* «Светофор получателя»: риск получателя до перевода. */
+  .risk { display:flex; gap:10px; align-items:flex-start; border-radius:12px; padding:10px 12px; margin-top:8px; font-size:14px; }
+  .risk i { flex:0 0 12px; width:12px; height:12px; border-radius:50%; background:currentColor; margin-top:4px; }
+  .risk b { display:block; }
+  .risk.red { background:var(--warn-bg); color:var(--warn); }
+  .risk.yellow { background:var(--amber-bg); color:var(--amber); }
+  .risk.green { background:var(--ok-bg); color:var(--ok); }
   .overlay { position:fixed; inset:0; background:rgba(10,48,36,.45); display:none; align-items:flex-end; justify-content:center; }
   .overlay.show { display:flex; }
   .sheet { background:#fff; width:100%; max-width:420px; border-radius:24px 24px 0 0; padding:10px 16px 16px; max-height:92vh; overflow:auto; }
@@ -158,7 +165,8 @@
   .toast .note.ok { background:#0f3d2e; color:#fff; }
   .toast .note.err { background:#fff; color:var(--warn); border:1px solid #f6caca; }
   .overlay { position:absolute; z-index:10; }
-  .sheet { max-width:none; }
+  /* Окно остановки не выше рамки телефона: иначе его верх с заголовком обрезался и до него нельзя было долистать. */
+  .sheet { max-width:none; max-height:92%; }
   .row { align-items:flex-start; }
   .row .ico { width:36px; height:36px; flex:none; border-radius:50%; background:var(--fill); color:var(--muted);
               display:flex; align-items:center; justify-content:center; }
@@ -391,6 +399,18 @@ const T = {
               '3%-ға «төлем қабылдауға» келісті: төрт күнде 20 бейтаныс адам шағын сомалар жіберді, олардың жетеуіне «ұтыс» кетті. Басты бетте — ескерту. Гүлнарға 25 000 ₸ аударыңыз — төлем тоқтайды. Қызметкерде — «Желілер» бөлімінде.'],
   hint_1022: ['На имя Венеры по её данным и поддельному видео удалённо открыли второй счёт, через него уже прошли деньги незнакомых людей. На главной — вопрос «Вы открывали этот счёт?». Нажмите «Это не я»: счёт приостановится, Венера получит подтверждение для полиции и суда. Во вкладке «Защита» видно, кто из банка открывал её данные.',
               'Венераның атына оның деректері мен жалған бейне арқылы қашықтан екінші шот ашылды, ол арқылы бейтаныс адамдардың ақшасы өтіп те үлгерді. Басты бетте — «Бұл шотты сіз аштыңыз ба?» деген сұрақ. «Бұл мен емеспін» батырмасын басыңыз: шот тоқтатылады, Венера полиция мен сотқа арналған растау алады. «Қорғау» бөлімінде банктен кім оның деректерін ашқаны көрінеді.'],
+  policeAbout: ['Подайте заявление в полицию: без согласия владельца счёта банк может вернуть замороженные деньги только по решению следствия или суда. Текст уже готов: даты, сумма, номер обращения в банк.',
+                'Полицияға арыз беріңіз: шот иесінің келісімінсіз банк бұғатталған ақшаны тек тергеу немесе сот шешімі бойынша қайтара алады. Мәтін дайын: күндер, сома, банкке өтініш нөмірі.'],
+  policeOpen: ['Заявление в полицию', 'Полицияға арыз'],
+  grpProtect: ['Защита от мошенников', 'Алаяқтардан қорғау'],
+  grpVictims: ['Пострадавшие', 'Зардап шеккендер'],
+  grpUnwitting: ['Невольные участники и вербовка', 'Байқаусыз қатысушылар және тарту'],
+  grpFraud: ['Счета мошенников', 'Алаяқтардың шоттары'],
+  grpBiz: ['Бизнес', 'Бизнес'],
+  grpOther: ['Другие', 'Басқалар'],
+  riskRed: ['Высокий риск', 'Жоғары тәуекел'],
+  riskYellow: ['Будьте внимательны', 'Абай болыңыз'],
+  riskGreen: ['Риск низкий', 'Тәуекел төмен'],
   who: ['Войти как', 'Кім ретінде кіру'],
   analystLink: ['Панель аналитика банка', 'Банк талдаушысының панелі'],
   available: ['Доступно', 'Қолжетімді'],
@@ -742,10 +762,19 @@ async function loginAs(id) {
   renderMe();
 }
 
+// Персонажи в демо-панели по историям: так проще найти нужного.
+const GROUPS = [['grpProtect', [1001, 1004, 1013, 1022]], ['grpVictims', [1002, 1006, 1018]],
+                ['grpUnwitting', [1005, 1019, 1020, 1010, 1012, 1021]], ['grpFraud', [1003, 1007, 1008, 1009]],
+                ['grpBiz', [1011, 1014, 1015]]];
 async function loadPeople() {
   people = await api('/demo/clients');
   // Под счетами в другом банке войти нельзя: они есть только среди получателей.
-  $('who').innerHTML = people.filter(p => !p.external).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  const own = people.filter(p => !p.external), byId = Object.fromEntries(own.map(p => [p.id, p])), used = new Set();
+  const group = (label, ids) => ids.length ? `<optgroup label="${esc(label)}">${ids.map(i => `<option value="${i}">${esc(byId[i].name)}</option>`).join('')}</optgroup>` : '';
+  $('who').innerHTML = GROUPS.map(([key, ids]) => {
+    const here = ids.filter(i => byId[i]); here.forEach(i => used.add(i));
+    return group(tr(key), here);
+  }).join('') + group(tr('grpOther'), own.filter(p => !used.has(p.id)).map(p => p.id));
   if (me) $('who').value = me;
   renderMe();
 }
@@ -937,6 +966,8 @@ function renderComplaints(items) {
       <p>${esc(tr('compLine', {m: money(p.amount), r: p.receiver}))}</p>
       <p><b>${esc(p.text)}</b></p>
       ${(p.banks || []).map(b => `<p>${esc(b)}</p>`).join('')}
+      ${p.stage !== 'returned' ? `<p>${tr('policeAbout')}</p>
+        <a class="btn soft" href="/clients/${me}/police-statement/${p.id}" target="_blank" rel="noopener" id="police-${p.id}">${tr('policeOpen')}</a>` : ''}
     </div>`).join('');
 }
 
@@ -1263,7 +1294,8 @@ async function checkRecipient() {
   if (!id) return;
   const r = await api(`/recipients/${id}/check`).catch(() => null);
   if ($('to').value !== id) return;
-  $('recipientNote').innerHTML = r && r.text ? `<div class="note err">${esc(r.text)}</div>` : '';
+  const lv = r && r.risk && r.risk.level;
+  $('recipientNote').innerHTML = lv ? `<div class="risk ${lv}" id="riskLight"><i></i><span><b>${tr({red: 'riskRed', yellow: 'riskYellow', green: 'riskGreen'}[lv])}</b>${esc(r.risk.text)}</span></div>` : '';
 }
 $('to').onchange = checkRecipient;
 

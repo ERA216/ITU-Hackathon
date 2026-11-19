@@ -37,6 +37,12 @@
   th { color:var(--muted); font-weight:600; font-size:13px; border-top:0; }
   td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .barcell { width:34%; }
+  /* Настройка весов: поле баллов и выделенный признак. */
+  #tuneTable input { width:72px; padding:6px 8px; border:1px solid transparent; border-radius:10px; background:#e6f3ed; font:inherit; text-align:right; }
+  #tuneTable input:focus { outline:none; border-color:#00ab75; background:#fff; }
+  #tuneTable tr.pick td { background:#e6f7f0; }
+  .tunebtn { margin-top:12px; border:1px solid #00ab75; background:#fff; color:#00875c; border-radius:20px; padding:8px 14px; font:inherit; font-size:14px; font-weight:500; cursor:pointer; }
+  .delta { font-size:13px; }
   .bar { height:10px; border-radius:0 4px 4px 0; background:var(--brand); min-width:1px; }
   .bar.honest { background:#5b8def; }
   .group { color:var(--muted); font-size:12px; }
@@ -81,6 +87,14 @@
     <h2 id="scenTitle">Что именно останавливает движок</h2>
     <p class="muted">Сумма по всем наборам данных. Строки «Схема» — хорошо, когда остановлено всё; строки «Честный» — хорошо, когда почти ничего.</p>
     <div id="scen"></div>
+  </div>
+
+  <div class="card" id="tune" hidden>
+    <h2>Настройка весов признаков</h2>
+    <p class="muted">Что будет, если изменить баллы признака: пересчёт на тех же синтетических переводах, в сумме по всем наборам. Движок при этом не меняется: вес меняет человек после такой проверки. Какие признаки чаще дают ложные остановки по решениям сотрудников, видно на странице «Эффективность».</p>
+    <div class="tiles" id="tuneTiles" style="margin-top:12px"></div>
+    <div class="scroll"><table id="tuneTable"></table></div>
+    <button class="tunebtn" id="tuneReset">Вернуть как было</button>
   </div>
 
   <div class="card" id="bizCard" hidden>
@@ -185,14 +199,15 @@ let drawCharts = () => {};
 let resizeTimer;
 addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => drawCharts(), 150); });
 
-fetch('/quality.json').then(r => r.json()).then(q => {
+fetch('/quality.json', {cache: 'no-cache'}).then(r => r.json()).then(q => {
   const cur = q.curve.find(c => c.threshold === q.threshold);
   $('lead').textContent = `Движок проверен на ${q.seeds} наборах синтетических данных, в каждом около ${q.transfers_per_seed.toLocaleString('ru-RU')} оценённых переводов. Сейчас перевод останавливается при оценке от ${q.threshold} баллов.`;
   const tile = (label, value, range) => `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div><div class="range">${range}</div></div>`;
   $('tiles').innerHTML =
     tile('Ловит переводов дропперам', pct(cur.recall[1]), `от ${pct(cur.recall[0])} до ${pct(cur.recall[2])} по наборам`) +
     tile('Зря останавливает честных переводов', pct(cur.false_rate[1], 2), `от ${pct(cur.false_rate[0], 2)} до ${pct(cur.false_rate[2], 2)}`) +
-    tile('Среди всех остановок настоящих схем', pct(cur.precision[1]), `от ${pct(cur.precision[0])} до ${pct(cur.precision[2])}; остальное — лишний экран для честного клиента`);
+    tile('Среди всех остановок настоящих схем', pct(cur.precision[1]), `от ${pct(cur.precision[0])} до ${pct(cur.precision[2])}; остальное — лишний экран для честного клиента`) +
+    (q.speed ? tile('Решение по переводу', `${q.speed.median_ms.toLocaleString('ru-RU')} мс`, `у 95% переводов — до ${q.speed.p95_ms.toLocaleString('ru-RU')} мс; ${q.speed.count.toLocaleString('ru-RU')} замеров, один поток, SQLite, обычный ноутбук`) : '');
   $('sub').textContent = 'Линия — среднее по наборам данных, заливка — разброс от худшего до лучшего. Вертикальная черта — текущий порог.';
   drawCharts = () => {
   lineChart($('c1'), q.curve, 'recall', {label: 'Ловит переводов дропперам, %', height: 220, max: 100, ticks: [0, 25, 50, 75, 100],
@@ -227,6 +242,7 @@ fetch('/quality.json').then(r => r.json()).then(q => {
     $('bizPayments').innerHTML = rows(q.business.payments, 'stopped', 'Остановлено');
     $('bizCard').hidden = false;
   }
+  if (q.tuning) setupTuning(q);
   if (q.devices) {
     $('farmDevices').innerHTML = rows(q.devices, 'flagged', 'Отмечено');
     $('farmCard').hidden = false;
@@ -237,6 +253,44 @@ fetch('/quality.json').then(r => r.json()).then(q => {
     $('casinoCard').hidden = false;
   }
 }).catch(() => { $('lead').textContent = 'Нет файла с результатами. Запустите: python -m app.quality'; });
+
+// Настройка весов: пересчёт «ловит / зря останавливает» при других баллах признаков, без изменения движка.
+function setupTuning(q) {
+  const base = {...q.tuning.weights}, w = {...base};
+  const codes = Object.keys(base).sort((a, b) => base[b] - base[a]);
+  const sim = weights => {
+    let caught = 0, scheme = 0, wrong = 0, honest = 0;
+    for (const c of q.tuning.combos) {
+      const hold = c.inc && c.codes.reduce((s, k) => s + (weights[k] || 0), 0) >= q.threshold;
+      if (c.scheme) { scheme += c.n; caught += hold ? c.n : 0; } else { honest += c.n; wrong += hold ? c.n : 0; }
+    }
+    return {recall: 100 * caught / scheme, wrong: 100 * wrong / honest, precision: 100 * caught / Math.max(1, caught + wrong), caught, falseN: wrong};
+  };
+  const ref = sim(base);
+  const tile = (label, value, sub) => `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div><div class="range">${sub}</div></div>`;
+  const delta = (a, b, d, better) => {
+    const x = +(a - b).toFixed(d);
+    if (!x) return 'как сейчас';
+    const good = better === 'up' ? x > 0 : x < 0;
+    return `<span class="delta" style="color:${good ? 'var(--brand)' : '#c62828'}">${x > 0 ? '+' : '−'}${Math.abs(x).toLocaleString('ru-RU')} п.п. к текущему</span>`;
+  };
+  const draw = () => {
+    const r = sim(w);
+    $('tuneTiles').innerHTML =
+      tile('Ловит переводов дропперам', pct(r.recall, 1), delta(r.recall, ref.recall, 1, 'up')) +
+      tile('Зря останавливает честных', pct(r.wrong, 2), delta(r.wrong, ref.wrong, 2, 'down')) +
+      tile('Настоящих среди остановок', pct(r.precision, 1), delta(r.precision, ref.precision, 1, 'up'));
+  };
+  const pick = new URLSearchParams(location.search).get('code');
+  $('tuneTable').innerHTML = '<tr><th>Признак</th><th class="num">Баллы сейчас</th><th class="num">Попробовать</th></tr>' +
+    codes.map(k => `<tr class="${k === pick ? 'pick' : ''}"><td>${esc(q.tuning.texts[k] || k)}</td><td class="num">${base[k]}</td>
+      <td class="num"><input type="number" min="0" max="100" step="5" value="${base[k]}" data-code="${esc(k)}" aria-label="Баллы: ${esc(q.tuning.texts[k] || k)}"></td></tr>`).join('');
+  $('tuneTable').querySelectorAll('input').forEach(i => i.oninput = () => { w[i.dataset.code] = Math.max(0, +i.value || 0); draw(); });
+  $('tuneReset').onclick = () => { Object.assign(w, base); $('tuneTable').querySelectorAll('input').forEach(i => i.value = base[i.dataset.code]); draw(); };
+  draw();
+  $('tune').hidden = false;
+  if (pick) { const i = $('tuneTable').querySelector(`input[data-code="${CSS.escape(pick)}"]`); if (i) setTimeout(() => { $('tune').scrollIntoView(); i.focus(); }, 300); }
+}
 </script>
 </body>
 </html>

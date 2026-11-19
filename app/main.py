@@ -695,10 +695,41 @@ def withdraw(case_id: int, s: dict = Depends(as_client)):
 
 @app.get("/recipients/{rid}/check")
 def check_recipient(rid: int, s: dict = Depends(as_client)):
-    """Проверка получателя по базе Антифрод-центра до перевода (в демо база — имитация)."""
+    """Проверка получателя до перевода: база Антифрод-центра (в демо — имитация) и «светофор получателя»."""
     _client(rid)
     status = engine.afc_status(conn, rid)
-    return {"list": status, "text": t(f"afc_{status}_check") if status else None}
+    return {"list": status, "text": t(f"afc_{status}_check") if status else None,
+            "risk": _recipient_risk(s["client_id"], rid)}
+
+
+def _recipient_risk(sender: int, rid: int) -> dict:
+    """«Светофор получателя»: насколько рискованно переводить этому получателю, по данным банка.
+
+    Красный — счёт в базе Антифрод-центра, ограничен банком, работает с дроп-телефона, входит в сеть дропперов
+    или встречается в нескольких независимых случаях. Жёлтый — новый счёт, деньги многих незнакомцев
+    за неделю или счёт в другом банке, о котором у нас нет данных. Зелёный — признаков нет. Подробностей о чужом
+    счёте клиент не видит: только уровень и общую причину.
+    """
+    now, c = _now(), _client(rid)
+    afc = engine.afc_status(conn, rid)
+    if afc:
+        return {"level": "red", "text": t(f"afc_{afc}_check")}
+    # «Знакомый» — с кем переводы были раньше чем неделю назад: свежий перевод-«приманка» знакомым не делает.
+    known = engine._had_contact(conn, sender, rid, (now - timedelta(days=7)).isoformat())
+    suspect = (c["status"] != "active"
+               or any(rid in f["accounts"] for f in engine.farm_devices(conn, now))
+               or any(rid in n["members"] for n in metrics.networks(conn, now))
+               or any(a["client_id"] == rid for a in metrics.linked_accounts(conn)))
+    if suspect:
+        return {"level": "red", "text": t("risk.red")}
+    if c["kind"] == "external":
+        return {"level": "yellow", "text": t("risk.external")}
+    if not known and now - datetime.fromisoformat(c["account_opened_at"]) < timedelta(days=engine.YOUNG_ACCOUNT_DAYS):
+        return {"level": "yellow", "text": t("risk.young")}
+    if not known and (engine.recruitment_signal(conn, rid, now) or engine.casino_signal(conn, rid, now)
+                      or (c["kind"] == "ip" and engine.rental_signal(conn, rid, now))):
+        return {"level": "yellow", "text": t("risk.flow")}
+    return {"level": "green", "text": t("risk.known" if known else "risk.green")}
 
 
 class CallSignalIn(BaseModel):
@@ -895,10 +926,54 @@ def _complaints_view(cid: int) -> list[dict]:
         # Что с деньгами, которые ушли в другой банк.
         banks = [t("complaint.interbank." + a["status"], b=a["bank"], m=_money(a["frozen"] if a["status"] == "frozen" else a["amount"]),
                    d=datetime.fromisoformat(a["due_at"]).strftime("%d.%m %H:%M")) for a in st["asks"]]
-        out.append({"id": p["id"], "created_at": p["created_at"], "amount": st["amount"],
+        out.append({"id": p["id"], "created_at": p["created_at"], "amount": st["amount"], "number": _complaint_number(p),
                     "receiver": i18n.name(who["id"], who["name"]), "stage": st["stage"],
                     "returned": st["returned"], "frozen": st["frozen"], "text": text, "banks": banks})
     return out
+
+
+def _complaint_number(p) -> str:
+    return f"Ж-{p['created_at'][:4]}-{p['id']:05d}"
+
+
+@app.get("/clients/{cid}/police-statement/{pid}", include_in_schema=False)
+def police_statement(cid: int, pid: int, s: dict = Depends(session)):
+    """Готовый текст заявления в полицию по жалобе: даты, сумма, получатель, что заморожено в цепочке, номер обращения.
+
+    Банк не подаёт заявление за клиента и не обещает исхода: пострадавший проверяет текст, дописывает, как с ним
+    связались мошенники, и подаёт сам — по номеру 102, на qamqor.gov.kz или в отделении полиции. Имена других
+    людей в цепочке в текст не попадают: их полиция запросит у банка по номеру обращения.
+    """
+    c = _own_client(s, cid)
+    p = conn.execute("SELECT * FROM complaints WHERE id=? AND complainant_id=?", (pid, cid)).fetchone()
+    if not p:
+        raise HTTPException(404, t("police.none"))
+    st = _complaint_state(p)
+    tr = st["transfer"]
+    who = _client(tr["receiver_id"])
+    d = lambda x: datetime.fromisoformat(x).strftime("%d.%m.%Y %H:%M")  # noqa: E731
+    hops = conn.execute("SELECT COUNT(*) AS n FROM cases WHERE complaint_id=?", (pid,)).fetchone()["n"]
+    banks = sorted({a["bank"] for a in st["asks"]})
+    fill = lambda key: f'<span class="fill">[{escape(t(key))}]</span>'  # noqa: E731
+    chain = t("police.chain", n=hops, f=_money(st["frozen"]), r=_money(st["returned"])) if hops else t("police.no_chain")
+    if banks:
+        chain += " " + t("police.banks", b=", ".join(banks))
+    body = f"""<h1>{escape(t("police.title"))}</h1>
+<div class="muted">{escape(t("police.lead", n=_complaint_number(p), d=d(p["created_at"])))}</div>
+<p class="demo" style="margin-top:12px">{escape(t("police.how"))}</p>
+<div class="paper">
+<p style="text-align:right">{escape(t("police.to"))}<br>{escape(t("police.from"))} {escape(i18n.name(c["id"], c["name"]).split(" (")[0])}<br>
+{escape(t("police.phone"))} {fill("police.fill_phone")}</p>
+<h2 style="text-align:center">{escape(t("police.head"))}</h2>
+<p>{escape(t("police.p1", d=d(tr["created_at"]), m=_money(tr["amount"]), r=i18n.name(who["id"], who["name"]).split(" (")[0]))} {fill("police.fill_what")}</p>
+<p>{escape(t("police.p2"))} {fill("police.fill_how")}</p>
+<p>{escape(t("police.p3", d=d(p["created_at"]), n=_complaint_number(p)))} {escape(chain)}</p>
+<p>{escape(t("police.p4"))}</p>
+<p>{escape(t("police.sign"))}</p>
+</div>
+<button onclick="print()">{escape(t("cert.print"))}</button>
+<div class="demo">{escape(t("police.note"))}</div>"""
+    return _page(t("police.title"), body)
 
 
 def _refundable(case) -> int:
@@ -1291,6 +1366,8 @@ h1{{font-size:22px;margin:0 0 4px;color:#1d1d1e}} .muted{{color:#587366;font-siz
 .bad{{background:#fdeeee;color:#c62828;border-radius:12px;padding:12px 14px;font-weight:600}}
 dl{{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;margin:16px 0}} dt{{color:#587366}} dd{{margin:0}}
 .demo{{border:1px dashed #b9dccb;color:#587366;border-radius:10px;padding:8px 12px;font-size:13px;margin-top:20px}}
+.paper{{border:1px solid #d6eadf;border-radius:12px;padding:16px 18px;margin:16px 0}} .paper h2{{font-size:18px;margin:14px 0}}
+.fill{{background:#fff5df;color:#6b4a00;border-radius:6px;padding:0 4px}}
 button{{font:inherit;font-weight:500;border:0;border-radius:12px;padding:12px 16px;background:#00ab75;color:#fff;cursor:pointer}}
 @media print{{body{{background:#fff}} main{{margin:0}} button{{display:none}}}}</style></head>
 <body><main>{body}</main></body></html>"""

@@ -9,6 +9,7 @@ import os
 import statistics
 import tempfile
 import time
+from collections import Counter
 from datetime import datetime, timedelta
 
 from . import clock, engine, seed
@@ -114,7 +115,8 @@ def _table(items: list, titles: dict, flagged: str | None = None) -> list[dict]:
 
 def run() -> dict:
     tmp = tempfile.mkdtemp()
-    per_seed, accounts, payments, cs_accounts, cs_payments, devices = [], [], [], [], [], []
+    per_seed, accounts, payments, cs_accounts, cs_payments, devices, eval_ms = [], [], [], [], [], [], []
+    combos, weights, texts = Counter(), {}, {}
     for s in SEEDS:
         conn, stats = seed.build(os.path.join(tmp, f"q{s}.db"), seed=s, verbose=False)
         flags = business_flags(conn, stats["ip_labels"], stats["now"])
@@ -122,6 +124,10 @@ def run() -> dict:
         devices += farm_flags(conn, stats["device_labels"], stats["now"])
         conn.close()
         per_seed.append(stats["scored"])
+        eval_ms += stats["eval_ms"]
+        combos.update(stats["codes"])
+        weights.update(stats["weights"])
+        texts.update(stats["code_texts"])
         accounts += [(stats["ip_labels"][cid], f) for cid, f in flags.items()]
         payments += stats["ip_scored"]
         cs_accounts += [(stats["cs_labels"][cid], f) for cid, f in cflags.items()]
@@ -169,6 +175,13 @@ def run() -> dict:
         "casino": {"accounts": _table(cs_accounts, CASINO_ACCOUNTS, flagged="flagged"),
                    "payments": _table(cs_payments, CASINO_PAYMENTS)},
         "devices": _table(devices, DEVICES, flagged="flagged"),
+        # Для настройки весов: сочетания сработавших признаков по всем наборам (сколько раз каждое встретилось).
+        "tuning": {"weights": weights, "texts": texts,
+                   "combos": [{"codes": list(c), "inc": inc, "scheme": sch, "n": n}
+                              for (c, inc, sch), n in sorted(combos.items(), key=lambda x: -x[1])]},
+        # Сколько длится решение по одному переводу: один поток, SQLite, обычный ноутбук.
+        "speed": {"count": len(eval_ms), "median_ms": round(statistics.median(eval_ms), 2),
+                  "p95_ms": round(sorted(eval_ms)[int(0.95 * len(eval_ms))], 2)} if eval_ms else None,
     }
 
 
@@ -183,6 +196,8 @@ if __name__ == "__main__":
     print(f"Ловит схем: {cur['recall'][0]}–{cur['recall'][2]}% (в среднем {cur['recall'][1]}%)")
     print(f"Зря останавливает честных: {cur['false_rate'][0]}–{cur['false_rate'][2]}%")
     print(f"Среди остановок настоящих схем: {cur['precision'][0]}–{cur['precision'][2]}%")
+    if data["speed"]:
+        print(f"Решение по переводу: медиана {data['speed']['median_ms']} мс, 95% — до {data['speed']['p95_ms']} мс")
     for r in data["by_scenario"]:
         print(f"  {r['group']:8} {r['title']}: остановлено {r['stopped']} из {r['total']}")
     print("Аренда ИП, счета:")

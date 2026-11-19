@@ -1982,3 +1982,87 @@ def test_landing_client_screen_and_tour_script_are_served():
     for page in ("/client", "/analyst", "/analyst/stats", "/quality"):
         html = c.get(page).text
         assert 'href="/client"' in html and 'class="brand" href="/"' in html, page
+
+
+# ---------- «Светофор получателя» и группы персонажей ----------
+
+def test_recipient_traffic_light():
+    st = client(STUDENT)
+    risk = lambda rid: st.get(f"/recipients/{rid}/check").json()["risk"]   # noqa: E731
+    assert risk(DROP_CARD)["level"] == "red" and risk(DROP_CARD)["text"].startswith("Получатель в списке")
+    assert risk(FAKE_INVEST)["level"] == "red"
+    assert risk(SAFE_ACCOUNT)["level"] == "red" and risk(CARD_GIVER)["level"] == "red"     # дроп-телефон, сеть
+    assert risk(MOM)["level"] == "green" and risk(MOM)["text"].startswith("Вы давно")
+    # Перевод-«приманка» 20 минут назад отправителя знакомым не делает.
+    assert risk(STRANGER)["level"] == "green" and not risk(STRANGER)["text"].startswith("Вы давно")
+    assert risk(RECRUIT)["level"] == "yellow" and "незнакомых" in risk(RECRUIT)["text"]
+    assert risk(BANK_CARD)["level"] == "yellow" and "другом банке" in risk(BANK_CARD)["text"]
+    main.conn.execute("INSERT INTO clients(id,name,account_opened_at,balance) VALUES(1990,'Новый счёт',?,0)",
+                      ((main._now() - timedelta(days=3)).isoformat(),))
+    main.conn.commit()
+    assert risk(1990)["level"] == "yellow" and "недавно" in risk(1990)["text"]
+    st.cookies.set("ca_lang", "kk")
+    assert risk(MOM)["text"].startswith("Сіз бұл адаммен")
+
+
+def test_every_persona_is_in_a_demo_group():
+    import re
+    html = open(os.path.join(main.STATIC, "index.html"), encoding="utf-8").read()
+    block = html[html.index("const GROUPS"):html.index("async function loadPeople")]
+    grouped = {int(x) for x in re.findall(r"\b1\d{3}\b", block)}
+    people = {p["id"] for p in TestClient(main.app).get("/demo/clients").json() if not p["external"]}
+    assert people == grouped
+
+
+# ---------- Заявление в полицию ----------
+
+def test_police_statement_is_ready_after_a_complaint():
+    victim, tid = block_seller()
+    comp = account(victim, VICTIM)["complaints"][0]
+    assert comp["number"].startswith("Ж-2")
+    page = victim.get(f"/clients/{VICTIM}/police-statement/{comp['id']}").text
+    assert "200 000 ₸" in page and comp["number"] in page and "qamqor.gov.kz" in page and "102" in page
+    assert "Данияр" in page and "Карта «для возврата»" not in page      # чужие имена из цепочки не раскрываются
+    assert "заморожено" in page and "не подаёт" in page
+    assert client(MOM).get(f"/clients/{VICTIM}/police-statement/{comp['id']}").status_code == 403
+    assert victim.get(f"/clients/{VICTIM}/police-statement/99999").status_code == 404
+    victim.cookies.set("ca_lang", "kk")
+    assert "АРЫЗ" in victim.get(f"/clients/{VICTIM}/police-statement/{comp['id']}").text
+
+
+def test_police_statement_mentions_the_other_bank():
+    saule, _ = saule_complains()
+    comp = account(saule, SAULE)["complaints"][0]
+    page = saule.get(f"/clients/{SAULE}/police-statement/{comp['id']}").text
+    assert "Банк «Б»" in page and "Антифрод-центр" in page
+
+
+# ---------- Решения сотрудников по признакам, калькулятор, скорость и настройка весов ----------
+
+def test_rule_feedback_from_analyst_decisions(with_history):
+    import json
+    fb = analyst().get("/analyst/metrics").json()["rule_feedback"]
+    assert fb and all(f["stops"] >= 3 and 0 <= f["released"] <= f["stops"] for f in fb)
+    assert [f["share"] for f in fb] == sorted((f["share"] for f in fb), reverse=True)
+    real = {r["code"]: r["points"] for c in main.conn.execute("SELECT reasons FROM cases") for r in json.loads(c["reasons"])}
+    assert all(real[f["code"]] == f["points"] for f in fb)
+
+
+def test_stats_page_has_calculator_rules_and_journal():
+    html = TestClient(main.app).get("/analyst/stats").text
+    for part in ('id="calc"', 'id="rules"', 'id="journal"', "setupCalc", "rule_feedback"):
+        assert part in html, part
+
+
+def test_quality_json_has_speed_and_weights_for_tuning():
+    q = TestClient(main.app).get("/quality.json").json()
+    assert q["speed"]["count"] > 10000 and 0 < q["speed"]["median_ms"] <= q["speed"]["p95_ms"] < 100
+    tun = q["tuning"]
+    assert tun["weights"]["stranger_incoming"] == 25 and tun["weights"]["amount_match"] == 30
+    # Пересчёт по сочетаниям признаков с текущими весами даёт ту же долю пойманных схем, что и страница.
+    caught = sum(c["n"] for c in tun["combos"] if c["scheme"] and c["inc"]
+                 and sum(tun["weights"][k] for k in c["codes"]) >= q["threshold"])
+    scheme = sum(c["n"] for c in tun["combos"] if c["scheme"])
+    cur = next(c for c in q["curve"] if c["threshold"] == q["threshold"])
+    assert abs(100 * caught / scheme - cur["recall"][1]) < 1.5
+    assert 'id="tune"' in TestClient(main.app).get("/quality").text

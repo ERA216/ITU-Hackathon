@@ -7,6 +7,7 @@
 import json
 import os
 import random
+import time
 from datetime import datetime, timedelta
 
 from . import clock, db, engine
@@ -394,7 +395,7 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
              "scored": [], "held": [], "passed": [], "ip_scored": [], "now": now,
              "ip_labels": {c["id"]: c["label"] for c in clients if c.get("type") == "ip" and c["id"] < CASINO_FIRST_ID},
              "cs_labels": {c["id"]: c["label"] for c in clients if c["id"] >= CASINO_FIRST_ID and c.get("label")},
-             "cs_scored": []}
+             "cs_scored": [], "eval_ms": [], "codes": [], "weights": {}, "code_texts": {}}
     for t, s, r, amount, scen in events:
         if evaluate and scen.startswith("cso_") and t >= now - timedelta(days=EVAL_DAYS):
             # Платежи кассы казино и честных двойников: что останавливает движок.
@@ -408,7 +409,9 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
         outgoing = scen == "normal" or scen.startswith(("tri_out", "tri_split", "tri_late", "benign_s",
                                                          "benign_n", "benign_r"))
         if evaluate and outgoing and t >= now - timedelta(days=EVAL_DAYS):
+            t0 = time.perf_counter()
             res = engine.evaluate(conn, s, r, amount, t)
+            stats["eval_ms"].append((time.perf_counter() - t0) * 1000)     # скорость решения по переводу
             held = res["decision"] == "hold"
             scheme = scen.startswith("tri_")
             if scheme:
@@ -417,6 +420,11 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
                 stats["honest"] += 1; stats["honest_held"] += held
             # Для страницы качества: оценка и могла ли сработать остановка при любом пороге.
             stats["scored"].append((res["score"], res["incoming_id"] is not None, scen))
+            # Для настройки весов: какие признаки сработали (сумма их баллов и есть оценка).
+            stats["codes"].append((tuple(sorted(x["code"] for x in res["reasons"])), res["incoming_id"] is not None, scheme))
+            for x in res["reasons"]:
+                stats["weights"].setdefault(x["code"], x["points"])
+                stats["code_texts"].setdefault(x["code"], x["text"])
         cur = conn.execute("INSERT INTO transfers(sender_id,receiver_id,amount,created_at,scenario) VALUES(?,?,?,?,?)",
                            (s, r, amount, t.isoformat(), scen))
         if evaluate and outgoing and t >= now - timedelta(days=EVAL_DAYS):

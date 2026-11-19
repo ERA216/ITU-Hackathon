@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-11-18T20:03:53",
+ "generated_at": "2026-11-19T16:55:53",
  "seeds": 10,
  "threshold": 85,
  "transfers_per_seed": 6026,
@@ -534,5 +534,459 @@
    "total": 40,
    "flagged": 0
   }
- ]
+ ],
+ "tuning": {
+  "weights": {
+   "new_receiver": 10,
+   "stranger_incoming": 25,
+   "not_to_sender": 15,
+   "same_day_forward": 10,
+   "amount_match": 30,
+   "fast_forward": 15,
+   "young_receiver": 10,
+   "split_forward": 40,
+   "pooled_forward": 40
+  },
+  "texts": {
+   "new_receiver": "Клиент впервые переводит этому получателю",
+   "stranger_incoming": "Недавно пришли деньги от человека, с которым раньше не было переводов",
+   "not_to_sender": "Деньги уходят не тому, кто их прислал, а третьему лицу",
+   "same_day_forward": "Перевод отправляется в течение суток после получения",
+   "amount_match": "Сумма почти совпадает с полученной от незнакомца",
+   "fast_forward": "Перевод отправляется меньше чем через 2 часа после получения",
+   "young_receiver": "Счёт получателя открыт меньше месяца назад",
+   "split_forward": "Вместе с прошлыми переводами новым получателям уходит почти вся сумма от незнакомца",
+   "pooled_forward": "Уходит почти вся сумма, которую прислали несколько незнакомых людей"
+  },
+  "combos": [
+   {
+    "codes": [],
+    "inc": false,
+    "scheme": false,
+    "n": 47265
+   },
+   {
+    "codes": [
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 7320
+   },
+   {
+    "codes": [
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 2779
+   },
+   {
+    "codes": [
+     "new_receiver",
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 639
+   },
+   {
+    "codes": [
+     "amount_match",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 448
+   },
+   {
+    "codes": [
+     "new_receiver"
+    ],
+    "inc": false,
+    "scheme": false,
+    "n": 376
+   },
+   {
+    "codes": [
+     "amount_match",
+     "new_receiver",
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 315
+   },
+   {
+    "codes": [
+     "amount_match",
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 256
+   },
+   {
+    "codes": [
+     "fast_forward",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 244
+   },
+   {
+    "codes": [
+     "amount_match",
+     "new_receiver",
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 121
+   },
+   {
+    "codes": [
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 91
+   },
+   {
+    "codes": [
+     "amount_match",
+     "new_receiver",
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 70
+   },
+   {
+    "codes": [
+     "amount_match",
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 45
+   },
+   {
+    "codes": [
+     "not_to_sender",
+     "same_day_forward",
+     "split_forward",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 43
+   },
+   {
+    "codes": [
+     "fast_forward",
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 42
+   },
+   {
+    "codes": [
+     "amount_match",
+     "fast_forward",
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 31
+   },
+   {
+    "codes": [
+     "amount_match",
+     "fast_forward",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 29
+   },
+   {
+    "codes": [
+     "new_receiver",
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 25
+   },
+   {
+    "codes": [
+     "fast_forward",
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 17
+   },
+   {
+    "codes": [
+     "amount_match",
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 13
+   },
+   {
+    "codes": [
+     "not_to_sender",
+     "same_day_forward",
+     "split_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 13
+   },
+   {
+    "codes": [
+     "amount_match",
+     "fast_forward",
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 11
+   },
+   {
+    "codes": [
+     "amount_match",
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 10
+   },
+   {
+    "codes": [
+     "new_receiver",
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 10
+   },
+   {
+    "codes": [
+     "amount_match",
+     "fast_forward",
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 8
+   },
+   {
+    "codes": [
+     "new_receiver",
+     "not_to_sender",
+     "pooled_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 8
+   },
+   {
+    "codes": [
+     "new_receiver",
+     "not_to_sender",
+     "pooled_forward",
+     "same_day_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 6
+   },
+   {
+    "codes": [
+     "not_to_sender",
+     "split_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 3
+   },
+   {
+    "codes": [
+     "fast_forward",
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 3
+   },
+   {
+    "codes": [
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 3
+   },
+   {
+    "codes": [
+     "amount_match",
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 2
+   },
+   {
+    "codes": [
+     "new_receiver",
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 2
+   },
+   {
+    "codes": [
+     "not_to_sender",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 2
+   },
+   {
+    "codes": [
+     "new_receiver",
+     "not_to_sender",
+     "split_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": false,
+    "n": 1
+   },
+   {
+    "codes": [
+     "fast_forward",
+     "not_to_sender",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 1
+   },
+   {
+    "codes": [
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 1
+   },
+   {
+    "codes": [
+     "amount_match",
+     "not_to_sender",
+     "same_day_forward",
+     "stranger_incoming"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 1
+   },
+   {
+    "codes": [
+     "new_receiver",
+     "young_receiver"
+    ],
+    "inc": false,
+    "scheme": true,
+    "n": 1
+   },
+   {
+    "codes": [
+     "amount_match",
+     "not_to_sender",
+     "stranger_incoming",
+     "young_receiver"
+    ],
+    "inc": true,
+    "scheme": true,
+    "n": 1
+   }
+  ]
+ },
+ "speed": {
+  "count": 60256,
+  "median_ms": 3.18,
+  "p95_ms": 9.62
+ }
 }

@@ -26,10 +26,15 @@
   .jactions { display:flex; gap:8px; flex-wrap:wrap; }
   .jactions button { border:1px solid #00ab75; background:#fff; border-radius:20px; padding:8px 14px; font:inherit; font-size:14px; font-weight:500; cursor:pointer; color:#00875c; }
   .jactions button:hover { background:#e6f7f0; }
+  /* Калькулятор эффекта для банка. */
+  .calc { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px 16px; margin:12px 0 16px; }
+  .calc label { display:block; color:var(--muted); font-size:13px; margin-bottom:4px; }
+  .calc input { width:100%; padding:10px 12px; border:1px solid transparent; border-radius:12px; background:#e6f3ed; font:inherit; color:var(--ink); }
+  .calc input:focus { outline:none; border-color:#00ab75; background:#fff; }
   .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:16px; }
   .tile .label { color:var(--muted); font-size:13px; }
   .tile .value { font-size:28px; font-weight:650; font-variant-numeric:tabular-nums; line-height:1.2; margin:2px 0; }
-  .tile .sub { color:var(--ink2); font-size:13px; }
+  .tile .sub, td .sub { color:var(--ink2); font-size:13px; }
   .chart { position:relative; }
   svg { display:block; overflow:visible; }
   .axis text { fill:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
@@ -83,6 +88,22 @@
   <section class="group"><h2>Нагрузка на сотрудников</h2><div class="tiles" id="load"></div></section>
   <section class="group"><h2>Ошибки системы</h2><div class="tiles" id="errors"></div></section>
   <section class="group"><h2>Жалобы и апелляции</h2><div class="tiles" id="appeals"></div></section>
+  <section class="group" id="rules"><h2>Признаки и решения сотрудников</h2>
+    <p class="lead" style="margin:0">Когда клиент настаивает на переводе, решает сотрудник. Если по какому-то признаку сотрудники часто разрешают перевод, остановка по нему чаще бывает лишней — его вес стоит проверить на странице качества. Система учится на решениях людей, но правила сама не меняет.</p>
+    <div class="scroll" id="rulesTable" style="margin-top:10px"></div>
+  </section>
+  <section class="group" id="calc"><h2>Если внедрить в банке: оценка эффекта</h2>
+    <p class="lead" style="margin:0">Впишите свои цифры. Доли, которые система показала на синтетических данных и в демо, подставлены ниже: ловит переводов дропперам <b id="cRecall">…</b>, зря останавливает честных <b id="cFalse">…</b>, клиенты сами закрывают <b id="cSelf">…</b> остановок, по <b id="cKept">…</b> остановок деньги не ушли.</p>
+    <div class="calc">
+      <div><label for="cClients">Клиентов, которые делают переводы, тыс.</label><input id="cClients" type="number" min="1" value="500"></div>
+      <div><label for="cPer">Переводов на клиента в месяц</label><input id="cPer" type="number" min="1" value="10"></div>
+      <div><label for="cRate">Доля переводов дропперам, %</label><input id="cRate" type="number" min="0" step="0.01" value="0.02"></div>
+      <div><label for="cAvg">Средний перевод дропперу, ₸</label><input id="cAvg" type="number" min="1000" step="1000" value="150000"></div>
+      <div><label for="cMin">Минут сотрудника на один случай</label><input id="cMin" type="number" min="1" value="20"></div>
+    </div>
+    <div class="tiles" id="calcOut"></div>
+    <p class="muted" style="margin:10px 0 0">Это оценка по допущениям, а не прогноз: доли взяты с синтетических данных и из смоделированной истории, а не из данных банка. Сотрудник на полный день — 168 часов в месяц.</p>
+  </section>
   <section class="group" id="journal"><h2>Журнал действий</h2>
     <p class="lead" style="margin:0">Каждая запись журнала хранит отпечаток предыдущей. Если запись изменить или удалить прямо в базе, в обход приложения, проверка покажет, с какой записи журнал испорчен. Это защищает от сотрудника-сообщника и помогает в спорах с клиентом и на проверках регулятора.</p>
     <div class="jstate" id="jState">Проверяем…</div>
@@ -92,7 +113,9 @@
 <script>
 const $ = id => document.getElementById(id);
 const money = n => Number(n).toLocaleString('ru-RU') + ' ₸';
-const compact = n => n >= 1e6 ? (n / 1e6).toLocaleString('ru-RU', {maximumFractionDigits: 1}) + ' млн ₸' : money(n);
+const compact = n => n >= 1e9 ? (n / 1e9).toLocaleString('ru-RU', {maximumFractionDigits: 1}) + ' млрд ₸'
+  : n >= 1e6 ? (n / 1e6).toLocaleString('ru-RU', {maximumFractionDigits: 1}) + ' млн ₸' : money(n);
+const plural = (n, one, few, many) => n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? few : many;
 const num = n => Number(n).toLocaleString('ru-RU');
 const pct = v => v == null ? '—' : v.toLocaleString('ru-RU', {maximumFractionDigits: 1}) + '%';
 const hrs = v => v == null ? '—' : v.toLocaleString('ru-RU', {maximumFractionDigits: 1}) + ' ч';
@@ -186,7 +209,37 @@ function drawBars(host, data) {
   $('dayTable').innerHTML = '<table><tr><th>День</th><th class="num">Остановлено</th><th class="num">Сохранено</th></tr>' +
     m.per_day.slice().reverse().map(d => `<tr><td>${d.day.slice(8, 10)}.${d.day.slice(5, 7)}</td><td class="num">${d.stops}</td><td class="num">${money(d.saved)}</td></tr>`).join('') + '</table>';
   checkJournal();
+  setupCalc(m);
+  const rf = m.rule_feedback || [];
+  $('rulesTable').innerHTML = rf.length ? '<table><tr><th>Признак</th><th class="num">Решил сотрудник</th><th class="num">Разрешил перевод</th></tr>' +
+    rf.map(r => `<tr><td>${r.text.replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]))}
+        <div class="sub">${r.points} ${plural(r.points, 'балл', 'балла', 'баллов')} · <a href="/quality?code=${encodeURIComponent(r.code)}#tune">проверить вес</a></div></td>
+      <td class="num">${num(r.stops)}</td><td class="num">${num(r.released)}<div class="sub">${pct(r.share)}</div></td></tr>`).join('') + '</table>'
+    : '<p class="muted">Пока мало решений сотрудников, чтобы делать выводы.</p>';
 })();
+
+// Калькулятор: сколько денег сохранит система и сколько работы останется сотрудникам.
+async function setupCalc(m) {
+  const q = await fetch('/quality.json', {cache: 'no-cache'}).then(r => r.ok ? r.json() : null).catch(() => null);
+  const cur = q ? q.curve.find(c => c.threshold === q.threshold) : null;
+  const recall = cur ? cur.recall[1] / 100 : 0.88, falseRate = cur ? cur.false_rate[1] / 100 : 0.002;
+  const self = (m.self_resolved_share ?? 60) / 100, kept = m.stops ? m.kept_count / m.stops : 0.6;
+  $('cRecall').textContent = pct(100 * recall); $('cFalse').textContent = pct(100 * falseRate, 2);
+  $('cSelf').textContent = pct(100 * self); $('cKept').textContent = pct(100 * kept);
+  const v = id => Math.max(0, +$(id).value || 0);
+  const draw = () => {
+    const total = v('cClients') * 1000 * v('cPer'), drop = total * v('cRate') / 100;
+    const caught = drop * recall, falseStops = (total - drop) * falseRate;
+    const saved = Math.round(caught * kept * v('cAvg'));
+    const cases = (caught + falseStops) * (1 - self), hours = cases * v('cMin') / 60;
+    $('calcOut').innerHTML =
+      tile('Сохранено денег клиентов', compact(saved * 12), `в год; в месяц ${compact(saved)}: остановлено ${num(Math.round(caught))} переводов дропперам из ${num(Math.round(drop))}`) +
+      tile('Честных переводов остановлено зря', num(Math.round(falseStops)), `в месяц из ${num(Math.round(total))}; клиент сразу видит причину и может настоять на переводе`) +
+      tile('Работа сотрудников', `${num(Math.round(hours))} ч`, `в месяц: ${num(Math.round(cases))} ${plural(Math.round(cases), 'случай', 'случая', 'случаев')}, остальные клиенты закрыли сами; это около ${num(Math.max(1, Math.round(hours / 168)))} ${plural(Math.max(1, Math.round(hours / 168)), 'сотрудника', 'сотрудников', 'сотрудников')} на полный день`);
+  };
+  document.querySelectorAll('.calc input').forEach(i => i.oninput = draw);
+  draw();
+}
 
 async function checkJournal(extra = '') {
   const j = await (await fetch('/analyst/journal')).json();

@@ -86,6 +86,7 @@ def compute(conn, now: datetime, days: int = 30) -> dict:
         **_interbank(conn, since),
         **_safes(conn, since),
         **_networks_summary(conn, now),
+        "rule_feedback": _rule_feedback(conn, since),
         "clearances": conn.execute("SELECT COUNT(*) AS n FROM clearances WHERE issued_at >= ?", (since,)).fetchone()["n"],
         "blocks": len(blocks),
         "appeals": len(appeals),
@@ -171,6 +172,23 @@ def networks(conn, now: datetime) -> list[dict]:
         out.append({"key": f"n{min(members)}", "members": sorted(members),
                     "farms": [f for f in farms if f["accounts"][0] in members]})
     return sorted(out, key=lambda n: -len(n["members"]))
+
+
+def _rule_feedback(conn, since: str, min_stops: int = 3) -> list[dict]:
+    """По каким признакам сотрудники чаще всего отпускали остановленный перевод (то есть остановка была лишней).
+
+    Учитываются остановки, по которым решал сотрудник: «разрешить» — ложная, «отменить» — настоящая схема.
+    Высокая доля ложных — повод проверить вес признака на странице качества. Вес сам не меняется.
+    """
+    acc: dict[str, dict] = {}
+    for k in conn.execute("""SELECT status, reasons FROM cases WHERE kind='intercept' AND status IN ('released','cancelled')
+                             AND decided_at IS NOT NULL AND created_at >= ?""", (since,)):
+        for r in json.loads(k["reasons"]):
+            a = acc.setdefault(r["code"], {"code": r["code"], "text": r["text"], "points": r["points"], "stops": 0, "released": 0})
+            a["stops"] += 1
+            a["released"] += k["status"] == "released"
+    out = [a | {"share": round(100 * a["released"] / a["stops"], 1)} for a in acc.values() if a["stops"] >= min_stops]
+    return sorted(out, key=lambda a: (-a["share"], -a["stops"]))
 
 
 def _networks_summary(conn, now: datetime) -> dict:
