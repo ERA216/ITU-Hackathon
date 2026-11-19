@@ -197,7 +197,7 @@
 </head>
 <body>
 <header class="topbar"><a class="brand" href="/" data-t="app">Чистый счёт</a>
-  <nav class="pages" aria-label="Страницы проекта"><a href="/" aria-current="page" data-t="navClient">Экран клиента</a><a href="/analyst" data-t="navStaff">Панель аналитика</a><a href="/analyst/stats" data-t="navStats">Эффективность</a><a href="/quality" data-t="navQuality">Качество движка</a></nav></header>
+  <nav class="pages" aria-label="Страницы проекта"><a href="/client" aria-current="page" data-t="navClient">Экран клиента</a><a href="/analyst" data-t="navStaff">Панель аналитика</a><a href="/analyst/stats" data-t="navStats">Эффективность</a><a href="/quality" data-t="navQuality">Качество движка</a></nav></header>
 <div class="app">
   <aside class="demo-panel" id="demoPanel">
     <button class="demo-toggle" id="demoToggle" data-t="demoToggle"></button>
@@ -261,6 +261,7 @@
         <div id="loanCard"></div>
         <div id="rentalCard"></div>
         <div id="casinoCard"></div>
+        <div id="idCards"></div>
         <div id="guardAlerts"></div>
         <div id="guardSafe"></div>
         <div id="alerts"></div>
@@ -299,6 +300,7 @@
         </div>
         <div class="card guardian" id="guardianCard"></div>
         <div class="card" id="selfCard" hidden></div>
+        <div class="card" id="accessCard"></div>
       </section>
     </div>
 
@@ -387,6 +389,8 @@ const T = {
               'Басқа банктен 140 000 ₸ алып, оны «қайтаруға арналған картаға» жіберді. «Басқа банктер» бөлімінде қызметкер «Б» Банкінің сұранысын имитациялайды: жүйе біздің банктегі тізбекті өзі тексеріп, жауап береді.'],
   hint_1021: ['Согласился «принимать платежи» за 3%: за четыре дня 20 незнакомых людей прислали мелкие суммы, семерым из них ушли «выигрыши». На главной — предупреждение. Переведите 25 000 ₸ Гульнар — выплата остановится. У сотрудника — во вкладке «Сети».',
               '3%-ға «төлем қабылдауға» келісті: төрт күнде 20 бейтаныс адам шағын сомалар жіберді, олардың жетеуіне «ұтыс» кетті. Басты бетте — ескерту. Гүлнарға 25 000 ₸ аударыңыз — төлем тоқтайды. Қызметкерде — «Желілер» бөлімінде.'],
+  hint_1022: ['На имя Венеры по её данным и поддельному видео удалённо открыли второй счёт, через него уже прошли деньги незнакомых людей. На главной — вопрос «Вы открывали этот счёт?». Нажмите «Это не я»: счёт приостановится, Венера получит подтверждение для полиции и суда. Во вкладке «Защита» видно, кто из банка открывал её данные.',
+              'Венераның атына оның деректері мен жалған бейне арқылы қашықтан екінші шот ашылды, ол арқылы бейтаныс адамдардың ақшасы өтіп те үлгерді. Басты бетте — «Бұл шотты сіз аштыңыз ба?» деген сұрақ. «Бұл мен емеспін» батырмасын басыңыз: шот тоқтатылады, Венера полиция мен сотқа арналған растау алады. «Қорғау» бөлімінде банктен кім оның деректерін ашқаны көрінеді.'],
   who: ['Войти как', 'Кім ретінде кіру'],
   analystLink: ['Панель аналитика банка', 'Банк талдаушысының панелі'],
   available: ['Доступно', 'Қолжетімді'],
@@ -578,6 +582,28 @@ const T = {
   rentalReport: ['Сообщить банку', 'Банкке хабарлау'],
   stopTextRental: ['Похоже, счётом ИП пользуется другой человек: за неделю на него заплатили много незнакомых людей, и деньги сразу уходят на карты частных лиц. Так работает «аренда ИП». Банк остановил перевод.',
                    'ЖК шотын басқа адам пайдаланып жүрген сияқты: бір аптада оған көптеген бейтаныс адамдар төледі, ал ақша бірден жеке тұлғалардың картасына кетіп жатыр. «ЖК-ны жалға беру» осылай жұмыс істейді. Банк аударымды тоқтатты.'],
+  idH: ['На ваше имя открыт новый счёт', 'Сіздің атыңызға жаңа шот ашылды'],
+  idText: ['{d} счёт открыли удалённо, по видео, с телефона {m}. На него уже пришло {s} от {n} незнакомых людей.',
+           '{d} шот қашықтан, бейне арқылы, {m} телефонынан ашылды. Оған {n} бейтаныс адамнан {s} түсіп үлгерді.'],
+  idForeign: ['С этого телефона вы в приложение никогда не входили.', 'Сіз бұл телефоннан қосымшаға ешқашан кірмегенсіз.'],
+  idAsk: ['Вы открывали этот счёт? Если нет, его открыли мошенники по вашим данным, чтобы проводить через него чужие деньги. Отвечать за такие деньги могут потребовать с вас, поэтому сообщите банку сразу.',
+          'Бұл шотты сіз аштыңыз ба? Егер жоқ болса, оны алаяқтар бөтен ақшаны өткізу үшін сіздің деректеріңіз бойынша ашқан. Мұндай ақша үшін жауапты сізден талап етуі мүмкін, сондықтан банкке бірден хабарлаңыз.'],
+  idNotMe: ['Это не я', 'Бұл мен емеспін'],
+  idMine: ['Это я открывал(а)', 'Мұны мен аштым'],
+  idDoneH: ['Счёт, открытый без вас, приостановлен', 'Сізсіз ашылған шот тоқтатылды'],
+  idDoneText: ['Вы сообщили банку {d}. На счёте заморожено {m}. Подтверждение № {n} можно приложить к заявлению в полицию или в суд.',
+               'Сіз банкке {d} хабарладыңыз. Шотта {m} бұғатталды. № {n} растауды полицияға немесе сотқа арызға қоса беруге болады.'],
+  idDoc: ['Открыть подтверждение', 'Растауды ашу'],
+  accessH: ['Кто смотрел ваши данные', 'Деректеріңізді кім қарады'],
+  accessNone: ['Пока никто из сотрудников банка не открывал ваш ИИН и телефон. Сотрудник видит их скрытыми и может открыть, только указав причину; каждый просмотр появится здесь.',
+               'Әзірге банк қызметкерлерінің ешқайсысы сіздің ЖСН мен телефоныңызды ашқан жоқ. Қызметкер оларды жасырын көреді және тек себебін көрсетіп аша алады; әр қарау осында көрсетіледі.'],
+  accessAbout: ['Сотрудник банка видит ваш ИИН и телефон скрытыми и может открыть их, только указав причину.',
+                'Банк қызметкері сіздің ЖСН мен телефоныңызды жасырын көреді және тек себебін көрсетіп аша алады.'],
+  accessBy: ['сотрудник банка', 'банк қызметкері'],
+  acc_contact: ['связаться с вами', 'сізбен байланысу'],
+  acc_appeal: ['проверка документов по апелляции', 'апелляция бойынша құжаттарды тексеру'],
+  acc_police: ['запрос правоохранительных органов', 'құқық қорғау органдарының сұранысы'],
+  acc_afc: ['выгрузка для Антифрод-центра', 'Антифрод-орталыққа деректер жіберу'],
   casinoH: ['Похоже, через вашу карту принимают платежи онлайн-казино', 'Картаңыз арқылы онлайн-казино төлемдері қабылданатын сияқты'],
   casinoText: ['За неделю {n} незнакомых людей прислали вам {m} небольшими суммами, а деньги ушли {k} новым получателям, и {w} из них сначала сами платили вам.',
                'Бір аптада {n} бейтаныс адам сізге шағын сомалармен {m} жіберді, ал ақша {k} жаңа алушыға кетті, олардың {w}-і алдымен өзі сізге төлеген.'],
@@ -825,6 +851,8 @@ async function load() {
   renderLoan(c.loan);
   renderRental(c.rental);
   renderCasino(c.casino);
+  renderOwnAccounts(c.own_accounts || []);
+  renderAccess(c.data_access || []);
   loadGuardian();
   const chosen = $('to').value;
   $('to').innerHTML = people.filter(p => p.id !== me).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
@@ -1104,6 +1132,36 @@ function renderCasino(r) {
     if ($('srOpen') && !$('srOpen').hidden) $('srOpen').click();
   };
 }
+// «Счёт открыли без меня»: на имя клиента удалённо открыли счёт. Клиент отвечает одной кнопкой.
+function renderOwnAccounts(items) {
+  $('idCards').innerHTML = items.map(a => a.answer === 'not_me' ? `
+    <div class="card cert">
+      <h2>${tr('idDoneH')}</h2>
+      <p class="muted">${esc(tr('idDoneText', {d: dateText(a.answered_at), m: money(a.frozen), n: a.number}))}</p>
+      <a class="btn" href="/clients/${me}/identity-claim/${a.id}" target="_blank" rel="noopener">${tr('idDoc')}</a>
+    </div>` : `
+    <div class="alert hot">
+      <h2>${tr('idH')}</h2>
+      <p>${esc(tr('idText', {d: dateText(a.opened_at), m: a.device || '?', s: money(a.inflow), n: a.senders}))}${a.own_device ? '' : ' ' + tr('idForeign')}</p>
+      <p>${tr('idAsk')}</p>
+      <div class="actions"><button class="primary" data-claim="${a.id}" data-answer="not_me">${tr('idNotMe')}</button>
+        <button class="soft" data-claim="${a.id}" data-answer="mine">${tr('idMine')}</button></div>
+    </div>`).join('');
+  $('idCards').querySelectorAll('[data-claim]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const r = await api(`/accounts/${b.dataset.claim}/claim`, {answer: b.dataset.answer});
+      if (r.text) note(r.text, 'ok');
+      await load();
+    } catch (e) { b.disabled = false; note(e.message, 'err'); }
+  });
+}
+// Кто из сотрудников банка открывал скрытые данные клиента и зачем.
+function renderAccess(items) {
+  $('accessCard').innerHTML = `<h2>${tr('accessH')}</h2>` + (items.length
+    ? `<p class="muted">${tr('accessAbout')}</p>` + items.map(x => `<p style="margin:6px 0">${esc(dateText(x.at))} — ${tr('accessBy')}: ${esc(tr('acc_' + x.reason))}</p>`).join('')
+    : `<p class="muted">${tr('accessNone')}</p>`);
+}
 // Доверенное лицо: близкий человек попросил открыть сейф.
 function renderGuardSafe(items) {
   $('guardSafe').innerHTML = items.map(g => `
@@ -1259,6 +1317,7 @@ function clearScreen() {
   $('recipientNote').innerHTML = ''; $('callAlert').innerHTML = '';
   $('guardAlerts').innerHTML = ''; $('guardianCard').innerHTML = ''; $('certCard').hidden = true;
   $('guardSafe').innerHTML = ''; $('safeCard').innerHTML = ''; safeKey = ''; $('casinoCard').innerHTML = '';
+  $('idCards').innerHTML = ''; $('accessCard').innerHTML = '';
   $('coolAlerts').innerHTML = ''; $('loanCard').innerHTML = ''; $('rentalCard').innerHTML = ''; $('bizLine').textContent = ''; $('msgText').value = ''; $('msgResult').innerHTML = ''; clearTimeout(coolTimer);
   $('compCards').innerHTML = ''; $('selfCard').hidden = true; selfKey = ''; selfMsg = '';
   document.querySelectorAll('[data-sess]').forEach(b => { b.checked = false; });
@@ -1279,5 +1338,6 @@ document.querySelectorAll('[data-lang]').forEach(b => b.onclick = async () => {
   load();
 })();
 </script>
+<script src="/tour.js"></script>
 </body>
 </html>

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Чистый счёт</title>
+<style>
+  :root { --ink:#1d1d1e; --ink2:#2f4a3f; --muted:#587366; --line:#d6eadf; --brand:#00ab75; --brand-ink:#00875c; --fill:#e6f3ed; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#fff; color:var(--ink); font:16px/1.5 "Roboto Flex", Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; }
+  /* Общее верхнее меню: четыре страницы проекта. */
+  .topbar { display:flex; justify-content:flex-start; align-items:center; gap:16px; flex-wrap:wrap; padding:10px 20px; background:#fff; border-bottom:1px solid #d6eadf; }
+  .topbar .brand { font-weight:700; font-size:17px; color:#1d1d1e; text-decoration:none; white-space:nowrap; }
+  .pages { display:flex; gap:6px; background:none; border-radius:20px; padding:0; overflow-x:auto; scrollbar-width:none; }
+  .pages::-webkit-scrollbar { display:none; }
+  .pages a { padding:7px 14px; border-radius:17px; border:0; background:none; font-size:14px; font-weight:500; color:#1d1d1e; text-decoration:none; white-space:nowrap; margin:0; }
+  .pages a:hover { background:#e6f7f0; }
+  @media (max-width:700px) {
+    .topbar { padding:10px 12px; gap:8px 10px; }
+    .pages { order:3; width:100%; display:grid; grid-template-columns:1fr 1fr; }
+    .pages a { text-align:center; padding:7px 8px; border-radius:11px; }
+  }
+  main { max-width:1040px; margin:0 auto; padding:20px 16px 40px; }
+  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:20px; margin-bottom:16px; }
+  h1 { font-size:30px; line-height:1.2; margin:0 0 8px; }
+  h2 { font-size:19px; margin:0 0 12px; }
+  h3 { font-size:16px; margin:0 0 6px; }
+  p { margin:8px 0; }
+  .muted { color:var(--muted); font-size:14px; }
+  .lead { font-size:18px; color:var(--ink2); max-width:760px; }
+  .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; }
+  .btn { display:inline-block; border-radius:12px; padding:12px 18px; font:inherit; font-weight:500; text-decoration:none; cursor:pointer; border:1px solid var(--brand); color:var(--brand-ink); background:#fff; }
+  .btn:hover { background:#e6f7f0; }
+  .btn.main { background:var(--brand); color:#fff; }
+  .btn.main:hover { background:#009d6b; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:16px; }
+  .tile .value { font-size:30px; font-weight:650; line-height:1.2; font-variant-numeric:tabular-nums; }
+  .tile .label { color:var(--ink2); font-size:14px; }
+  .steps { display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); gap:16px; }
+  .step { background:var(--fill); border-radius:14px; padding:16px; }
+  .step b.n { display:inline-block; width:26px; height:26px; line-height:26px; text-align:center; border-radius:50%; background:var(--brand); color:#fff; font-size:14px; margin-right:6px; }
+  .themes { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:16px; }
+  .theme { border:1px solid var(--line); border-radius:14px; padding:16px; }
+  .theme ul { margin:8px 0 0; padding-left:18px; }
+  .theme li { margin:4px 0; }
+  .theme li span { color:var(--muted); font-size:14px; }
+  ul.plain { padding-left:18px; margin:8px 0; }
+  ul.plain li { margin:6px 0; }
+  .note { border:1px dashed #b9dccb; color:var(--muted); border-radius:12px; padding:10px 14px; font-size:14px; }
+</style>
+</head>
+<body>
+<header class="topbar"><a class="brand" href="/">Чистый счёт</a>
+  <nav class="pages" aria-label="Страницы проекта"><a href="/client">Экран клиента</a><a href="/analyst">Панель аналитика</a><a href="/analyst/stats">Эффективность</a><a href="/quality">Качество движка</a></nav></header>
+<main>
+  <section class="card" id="hero">
+    <h1>Чистый счёт</h1>
+    <p class="lead">Защищаем честных клиентов банка от статуса дроппера и помогаем банку находить настоящих дропперов.</p>
+    <p>Мошенники переводят человеку «по ошибке» чужие деньги и просят вернуть их на другую карту. Так студент или продавец, ничего не подозревая, становится звеном схемы, а потом его счёт блокируют без понятных сроков. По открытым данным, с 2025 года в Казахстане заблокированы сотни тысяч дропперских счетов, и среди них много невольных участников.</p>
+    <p>«Чистый счёт» — прототип для мобильного приложения и панели сотрудника Банка ЦентрКредит: он предупреждает о чужих деньгах, останавливает пересылку, разбирает жалобы по цепочке переводов и честно отличает невольного участника от организатора.</p>
+    <div class="actions">
+      <button class="btn main" id="tourStart">Показ за 3 минуты</button>
+      <a class="btn" href="/client">Экран клиента</a>
+      <a class="btn" href="/analyst">Панель сотрудника банка</a>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="tiles">
+      <div class="tile"><div class="value">88%</div><div class="label">переводов дропперам останавливает движок на синтетических данных</div></div>
+      <div class="tile"><div class="value">0,20%</div><div class="label">честных переводов останавливает зря; клиент сразу видит причину</div></div>
+      <div class="tile"><div class="value">6 из 6</div><div class="label">тем кейса БЦК: антифрод, данные, кибербезопасность, операции, сервисы, процессы</div></div>
+      <div class="tile"><div class="value">ru + kk</div><div class="label">все тексты для клиента на русском и казахском</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Как это работает</h2>
+    <div class="steps">
+      <div class="step"><h3><b class="n">1</b>Предупредить</h3><p>Пришли деньги от незнакомца — приложение сразу говорит: возможно, это чужие деньги, и даёт вернуть их отправителю одной кнопкой.</p></div>
+      <div class="step"><h3><b class="n">2</b>Остановить</h3><p>Если мошенник уговаривает переслать деньги дальше, перевод останавливается с объяснением. Так же — звонок «из банка», «встречный кредит», перевод под диктовку.</p></div>
+      <div class="step"><h3><b class="n">3</b>Разобраться честно</h3><p>По жалобе система идёт по цепочке: у невольного участника замораживает только спорную сумму, апелляция — прямо в приложении, со сроком ответа.</p></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Что сделано: шесть тем кейса</h2>
+    <div class="themes">
+      <div class="theme"><h3>Выявление мошенничества и антифрод</h3><ul>
+        <li>Перехват пересылки чужих денег, дробления и «сбора» <span>— Айдана, Руслан</span></li>
+        <li>«Аренда ИП» и касса онлайн-казино <span>— ИП Нурлан, Самат</span></li>
+        <li>Дроп-фермы и сети дропперов <span>— вкладка «Сети»</span></li>
+        <li>«Встречный кредит» <span>— Болат</span></li></ul></div>
+      <div class="theme"><h3>Защита клиентов и финансовых данных</h3><ul>
+        <li>«Возможно, это чужие деньги» и возврат одной кнопкой <span>— Айдана</span></li>
+        <li>«Сейф» для сбережений, доверенное лицо, период охлаждения <span>— Мама</span></li>
+        <li>«Счёт открыли без меня» <span>— Венера</span></li>
+        <li>Скрытые ИИН и телефон, «Кто смотрел мои данные» <span>— вкладка «Защита»</span></li></ul></div>
+      <div class="theme"><h3>Кибербезопасность банковских систем</h3><ul>
+        <li>Журнал действий, который нельзя подделать задним числом <span>— «Эффективность»</span></li>
+        <li>Правило двух ключей для крупных действий сотрудников <span>— панель аналитика</span></li>
+        <li>Шифрование документов, защита входа, запрет встраивания страниц</li></ul></div>
+      <div class="theme"><h3>Безопасность финансовых операций</h3><ul>
+        <li>Перевод под диктовку: разговор, вставка реквизитов, ссылка из мессенджера <span>— Мама</span></li>
+        <li>Сигнал оператора о звонке, списки Антифрод-центра <span>— Мама</span></li>
+        <li>Соразмерная блокировка вместо закрытия всего счёта <span>— Данияр</span></li></ul></div>
+      <div class="theme"><h3>Новые цифровые сервисы</h3><ul>
+        <li>Апелляция в приложении со сроком ответа и справка с проверкой по коду <span>— Данияр</span></li>
+        <li>«Меня втянули в схему»: сообщить банку самому <span>— Тимур</span></li>
+        <li>Статус жалобы для пострадавшего, жалоба через другой банк <span>— Гульнар, Сауле</span></li>
+        <li>Проверка подозрительного сообщения <span>— любой персонаж</span></li></ul></div>
+      <div class="theme"><h3>Рабочие процессы банка</h3><ul>
+        <li>Карточка случая с графом денег и подсказкой «невольный участник или организатор»</li>
+        <li>Эффективность: сохранено, «Не пришлось возмещать», нагрузка на сотрудников</li>
+        <li>Выгрузка сведений для Антифрод-центра и АФМ</li>
+        <li>Честная страница качества движка на 10 наборах данных</li></ul></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Чего нет у других</h2>
+    <ul class="plain">
+      <li>Кнопка «вернуть отправителю» есть у некоторых банков, но автоматического перехвата пересылки чужих денег, апелляции в приложении и соразмерной блокировки мы ни у кого не нашли.</li>
+      <li>Системы поиска дропперов работают только для банка. «Чистый счёт» работает и с клиентом: объясняет, предупреждает и даёт сообщить самому.</li>
+      <li>Подсказка сотруднику отличает невольного участника от организатора, а решение всегда остаётся за человеком.</li>
+    </ul>
+  </section>
+
+  <p class="note">Прототип для V Регионального ITU Hackathon-2026, кейс Банка ЦентрКредит. Данные синтетические. Списки Антифрод-центра, оператор связи, другие банки и устройства входа — имитация. Цифры качества показывают, что правила работают как задумано, но не предсказывают результат на данных банка.</p>
+</main>
+<script src="/tour.js"></script>
+<script>document.getElementById('tourStart').onclick = () => tourStart();</script>
+</body>
+</html>

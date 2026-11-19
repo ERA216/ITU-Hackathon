@@ -20,6 +20,12 @@
   .muted { color:var(--muted); font-size:13px; }
   .note { background:var(--amber-bg); color:var(--amber); border-radius:12px; padding:10px 14px; font-size:14px; margin-bottom:14px; }
   .group { background:var(--card); border:1px solid #d6eadf; border-radius:16px; padding:16px; margin-bottom:14px; }
+  /* Журнал действий: проверка, что записи не меняли задним числом. */
+  .jstate { border-radius:12px; padding:10px 14px; font-size:14px; margin:10px 0; }
+  .jstate.ok { background:#e6f7f0; color:#00875c; } .jstate.bad { background:var(--warn-bg); color:var(--warn); }
+  .jactions { display:flex; gap:8px; flex-wrap:wrap; }
+  .jactions button { border:1px solid #00ab75; background:#fff; border-radius:20px; padding:8px 14px; font:inherit; font-size:14px; font-weight:500; cursor:pointer; color:#00875c; }
+  .jactions button:hover { background:#e6f7f0; }
   .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:16px; }
   .tile .label { color:var(--muted); font-size:13px; }
   .tile .value { font-size:28px; font-weight:650; font-variant-numeric:tabular-nums; line-height:1.2; margin:2px 0; }
@@ -55,7 +61,7 @@
 </head>
 <body>
 <header class="topbar"><a class="brand" href="/">Чистый счёт</a>
-  <nav class="pages" aria-label="Страницы проекта"><a href="/">Экран клиента</a><a href="/analyst">Панель аналитика</a><a href="/analyst/stats" aria-current="page">Эффективность</a><a href="/quality">Качество движка</a></nav></header>
+  <nav class="pages" aria-label="Страницы проекта"><a href="/client">Экран клиента</a><a href="/analyst">Панель аналитика</a><a href="/analyst/stats" aria-current="page">Эффективность</a><a href="/quality">Качество движка</a></nav></header>
 <main>
   <h1>Эффективность за 30 дней</h1>
   <p class="lead" id="lead">Загружаем показатели…</p>
@@ -77,6 +83,11 @@
   <section class="group"><h2>Нагрузка на сотрудников</h2><div class="tiles" id="load"></div></section>
   <section class="group"><h2>Ошибки системы</h2><div class="tiles" id="errors"></div></section>
   <section class="group"><h2>Жалобы и апелляции</h2><div class="tiles" id="appeals"></div></section>
+  <section class="group" id="journal"><h2>Журнал действий</h2>
+    <p class="lead" style="margin:0">Каждая запись журнала хранит отпечаток предыдущей. Если запись изменить или удалить прямо в базе, в обход приложения, проверка покажет, с какой записи журнал испорчен. Это защищает от сотрудника-сообщника и помогает в спорах с клиентом и на проверках регулятора.</p>
+    <div class="jstate" id="jState">Проверяем…</div>
+    <div class="jactions"><button id="jCheck">Проверить ещё раз</button><button id="jTamper">Демо: изменить запись задним числом</button></div>
+  </section>
 </main>
 <script>
 const $ = id => document.getElementById(id);
@@ -174,7 +185,24 @@ function drawBars(host, data) {
   draw(); let t; addEventListener('resize', () => { clearTimeout(t); t = setTimeout(draw, 150); });
   $('dayTable').innerHTML = '<table><tr><th>День</th><th class="num">Остановлено</th><th class="num">Сохранено</th></tr>' +
     m.per_day.slice().reverse().map(d => `<tr><td>${d.day.slice(8, 10)}.${d.day.slice(5, 7)}</td><td class="num">${d.stops}</td><td class="num">${money(d.saved)}</td></tr>`).join('') + '</table>';
+  checkJournal();
 })();
+
+async function checkJournal(extra = '') {
+  const j = await (await fetch('/analyst/journal')).json();
+  const at = s => s.replace('T', ' ').slice(0, 16);
+  $('jState').className = 'jstate ' + (j.ok ? 'ok' : 'bad');
+  $('jState').textContent = j.ok
+    ? `Журнал цел: ${num(j.count)} ${j.count % 10 === 1 && j.count % 100 !== 11 ? 'запись' : j.count % 10 >= 2 && j.count % 10 <= 4 && (j.count % 100 < 12 || j.count % 100 > 14) ? 'записи' : 'записей'}, ни одну не меняли и не удаляли. Последний отпечаток ${j.last}…, проверено ${at(j.checked_at)}.`
+    : `Журнал испорчен: запись № ${j.broken.id} (${at(j.broken.at)}) изменили или удалили задним числом. ${extra}Вернуть журнал — «Сбросить демо» в панели аналитика.`;
+}
+$('jCheck').onclick = () => checkJournal();
+$('jTamper').onclick = async () => {
+  const r = await fetch('/demo/journal/tamper', {method: 'POST'});
+  const t = await r.json();
+  checkJournal(r.ok ? `Демо изменило текст записи на «${t.text}». ` : '');
+};
 </script>
+<script src="/tour.js"></script>
 </body>
 </html>

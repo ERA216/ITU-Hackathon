@@ -380,7 +380,7 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
     демо-серверу они не нужны, без них он запускается быстрее.
     """
     if reset:
-        for table in ("devices", "safes", "interbank", "loans", "self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
+        for table in ("approvals", "data_access", "account_claims", "devices", "safes", "interbank", "loans", "self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
             conn.execute(f"DELETE FROM {table}")
     now = (now or clock.now()).replace(microsecond=0)
     rng = random.Random(seed)
@@ -429,6 +429,8 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
         history.simulate(conn, stats, now, random.Random(seed + 1))
     stats["device_labels"] = synthetic_devices(conn, random.Random(seed * 31 + 3), now) if with_business else {}
     _demo_personas(conn, now)
+    from . import journal
+    journal.seal(conn)          # отпечатки для всех записей журнала (см. app/journal.py)
     conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('seeded_at',?)", (now.isoformat(),))
     conn.commit()
     return stats
@@ -477,6 +479,9 @@ def _demo_personas(conn, now: datetime):
         (1019, "Арман (продаёт билеты на концерты)", now - timedelta(days=900), 21000, "honest"),
         (1020, "Дина (получила перевод из другого банка)", now - timedelta(days=600), 17000, "honest"),
         (1021, "Самат (студент, «принимает платежи» за процент)", now - timedelta(days=50), 4000, "dropper"),
+        (1022, "Венера (на её имя открыли чужой счёт)", now - timedelta(days=1800), 230000, "honest"),
+        # Счёт на имя Венеры, который открыли без неё: по её данным и поддельному видео, удалённо, с «дроп-телефона».
+        (1023, "Венера (второй счёт, открыт удалённо)", now - timedelta(days=6), 0, "dropper"),
     ]
     conn.executemany(
         "INSERT INTO clients(id,name,account_opened_at,balance,true_kind) VALUES(?,?,?,?,?)",
@@ -484,6 +489,7 @@ def _demo_personas(conn, now: datetime):
     conn.executemany("UPDATE clients SET kind='ip', activity=? WHERE id=?", [
         ("Оптовая торговля продуктами", 1011), ("Розничная торговля одеждой", 1014), ("Магазин одежды", 1015)])
     conn.execute("UPDATE clients SET kind='external', bank='Банк «Б»' WHERE id IN (1016, 1017)")
+    conn.execute("UPDATE clients SET owner_id=1022, opened_via='remote', opened_device='drop-81ad' WHERE id=1023")
     tr = [
         (1004, 1001, 15000, now - timedelta(days=200), "demo"),
         (1004, 1001, 20000, now - timedelta(days=9), "demo"),
@@ -613,19 +619,28 @@ def _demo_personas(conn, now: datetime):
     for n, amount in enumerate([18000, 42000, 9000, 27000, 15000, 33000, 21000]):
         tr_at(1021, (200, 203, 206, 209, 212, 214, 217)[n], amount, now - timedelta(hours=85 - 11 * n), "demo_out")
 
+    # На имя Венеры шесть дней назад удалённо открыли счёт: по её данным и поддельному видео, с «дроп-телефона».
+    # Незнакомые люди платят на него «предоплату», деньги уходят дальше. Венера пока об этом не знает.
+    for n, (pair, amount) in enumerate([((1022, 171), 12000), ((175, 1022), 45000), ((1022, 171), 9000),
+                                        ((175, 1022), 45000), ((1022, 179), 15000)]):
+        tr_at(*pair, amount, now - timedelta(days=130 - 30 * n))
+    for sender, amount, hours in [(150, 120000, 120), (155, 85000, 99), (160, 210000, 68)]:
+        tr_at(sender, 1023, amount, now - timedelta(hours=hours), "demo_in")
+    tr_at(1023, 295, 300000, now - timedelta(hours=66), "demo_out")
+
     # Устройства входа в приложение. У каждого своё; у Мамы и Айданы общий семейный планшет (два давних счёта —
     # это не ферма). Два «дроп-телефона»: на них работают карта «для возврата», «Безопасный счёт», Руслан,
-    # Тимур (отдал доступ к приложению), ИП Нурлан (сдал ИП «в аренду»), Самат (касса казино) и два дропперских
-    # счёта из синтетики. На одном телефоне больше трёх счетов разных людей — так выглядит дроп-ферма.
+    # Тимур (отдал доступ к приложению), ИП Нурлан (сдал ИП «в аренду»), Самат (касса казино), счёт, открытый
+    # на имя Венеры, и три дропперских счёта из синтетики. На одном телефоне больше трёх счетов разных людей — так выглядит дроп-ферма.
     devs = []
-    for cid in list(range(1001, 1016)) + [1018, 1019, 1020, 1021]:
+    for cid in list(range(1001, 1016)) + [1018, 1019, 1020, 1021, 1022]:
         devs.append((f"own-{cid}", cid, MODELS[cid % len(MODELS)], (now - timedelta(days=300)).isoformat(),
                      (now - timedelta(days=1)).isoformat()))
     for cid in (1001, 1004):
         devs.append(("family-tablet", cid, "Samsung Galaxy Tab A9", (now - timedelta(days=400)).isoformat(),
                      (now - timedelta(days=2)).isoformat()))
     for did, model, members in [("drop-3f9c", "Samsung Galaxy A15", (1003, 1009, 1007, 1012, 1014, 290)),
-                                ("drop-81ad", "Redmi 13C", (1021, 1009, 292, 295))]:
+                                ("drop-81ad", "Redmi 13C", (1021, 1009, 292, 295, 1023))]:
         for cid in members:
             devs.append((did, cid, model, (now - timedelta(days=5)).isoformat(), (now - timedelta(hours=2)).isoformat()))
     conn.executemany("INSERT INTO devices(device_id,client_id,model,first_seen,last_seen) VALUES(?,?,?,?,?)", devs)

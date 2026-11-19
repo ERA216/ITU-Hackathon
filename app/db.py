@@ -14,7 +14,10 @@ CREATE TABLE IF NOT EXISTS clients (
     true_kind TEXT NOT NULL DEFAULT 'honest',   -- honest | dropper (метка синтетики, банку неизвестна)
     kind TEXT NOT NULL DEFAULT 'person',        -- person: частное лицо | ip: ИП | external: счёт в другом банке
     activity TEXT,                              -- вид деятельности ИП
-    bank TEXT                                   -- для счёта в другом банке: какой банк
+    bank TEXT,                                  -- для счёта в другом банке: какой банк
+    owner_id INTEGER REFERENCES clients(id),    -- ещё один счёт на имя этого клиента (в демо — открытый без него)
+    opened_via TEXT,                            -- branch: в отделении | remote: удалённо, по видео
+    opened_device TEXT                          -- с какого устройства открыт удалённо
 );
 CREATE TABLE IF NOT EXISTS transfers (
     id INTEGER PRIMARY KEY,
@@ -71,7 +74,8 @@ CREATE TABLE IF NOT EXISTS events (
     action TEXT NOT NULL,
     case_id INTEGER REFERENCES cases(id),
     transfer_id INTEGER REFERENCES transfers(id),
-    details TEXT                        -- JSON
+    details TEXT,                       -- JSON
+    hash TEXT                           -- отпечаток записи вместе с отпечатком предыдущей (app/journal.py)
 );
 CREATE INDEX IF NOT EXISTS ix_events_case ON events(case_id, id);
 CREATE TABLE IF NOT EXISTS afc_list (
@@ -159,6 +163,35 @@ CREATE TABLE IF NOT EXISTS devices (
     PRIMARY KEY (device_id, client_id)
 );
 CREATE INDEX IF NOT EXISTS ix_devices_client ON devices(client_id);
+CREATE TABLE IF NOT EXISTS approvals (
+    id INTEGER PRIMARY KEY,             -- правило двух ключей: действие ждёт подтверждения второго сотрудника
+    kind TEXT NOT NULL,                 -- refund: возврат пострадавшему | network: приостановка сети | release: снять
+                                        -- ограничения или разрешить перевод «похожему на организатора»
+    target TEXT NOT NULL,               -- номер случая или ключ сети
+    summary TEXT NOT NULL,              -- что будет сделано, словами
+    params TEXT,                        -- JSON
+    requested_by TEXT NOT NULL,
+    requested_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',   -- pending | done | rejected
+    decided_by TEXT,
+    decided_at TEXT
+);
+CREATE TABLE IF NOT EXISTS data_access (
+    id INTEGER PRIMARY KEY,             -- сотрудник открыл скрытые персональные данные клиента
+    client_id INTEGER NOT NULL REFERENCES clients(id),
+    employee TEXT NOT NULL,
+    reason TEXT NOT NULL,               -- contact | appeal | police | afc
+    at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_data_access_client ON data_access(client_id);
+CREATE TABLE IF NOT EXISTS account_claims (
+    account_id INTEGER PRIMARY KEY REFERENCES clients(id),  -- счёт, открытый на имя клиента: что ответил владелец
+    owner_id INTEGER NOT NULL REFERENCES clients(id),
+    answer TEXT NOT NULL,               -- mine: открывал сам | not_me: не открывал
+    code TEXT UNIQUE,                   -- код проверки подтверждения «я не открывал»
+    case_id INTEGER REFERENCES cases(id),
+    at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -176,7 +209,7 @@ CREATE TABLE IF NOT EXISTS documents (
 """
 
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 def connect(path: str | None = None) -> sqlite3.Connection:

@@ -1,5 +1,6 @@
 """API демо-банка.  Запуск:  uvicorn app.main:app --reload"""
 import base64
+import hashlib
 import json
 import os
 import re
@@ -16,7 +17,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response as RawResponse
 from pydantic import BaseModel, Field
 
-from . import clock, db, engine, i18n, messages, metrics, seed, vault
+from . import clock, db, engine, i18n, journal, messages, metrics, seed, vault
 from .i18n import t
 
 conn = db.connect()
@@ -43,6 +44,12 @@ COMPLAINT_LIMIT = 3             # жалоб от одного клиента з
 CHAIN_HOPS = 3                  # на сколько звеньев жалоба проходит по цепочке переводов
 INTERBANK_HOURS = 24            # срок ответа на запрос между банками через Антифрод-центр (в демо)
 SAFE_UNLOCK_HOURS = 24          # «Сейф» через приложение открывается только через сутки
+TWO_KEY_REFUND = 100_000        # возврат пострадавшему от этой суммы подтверждает второй сотрудник
+# Сотрудники банка в демо. В банке у каждого свой вход; здесь код доступа один, сотрудника выбирают из списка.
+EMPLOYEES = {"aruzhan": "Аружан С.", "medet": "Медет К."}
+# Зачем сотрудник открывает скрытые персональные данные клиента. Причина видна клиенту и остаётся в журнале.
+PII_REASONS = {"contact": "Связаться с клиентом", "appeal": "Проверка документов по апелляции",
+               "police": "Запрос правоохранительных органов", "afc": "Выгрузка для Антифрод-центра"}
 GUARDIAN_KNOWN_DAYS = 30        # доверенное лицо: человек, с которым переводы идут дольше этого срока
 GUARDIAN_REMOVE_HOURS = 24      # отключение доверенного лица вступает в силу через сутки
 COOLING_MIN = 100_000           # крупный перевод новому получателю уходит не сразу
@@ -94,6 +101,10 @@ EVENT_TEXT = {
     "interbank_out": "Деньги ушли в другой банк: отправлен запрос на заморозку",
     "interbank_in": "Запрос другого банка через Антифрод-центр: перевод их клиента — мошенничество",
     "interbank_answer": "Ответ другого банка на запрос",
+    "approval_requested": "Действие ждёт подтверждения второго сотрудника",
+    "approval_confirmed": "Второй сотрудник подтвердил действие",
+    "approval_rejected": "Второй сотрудник отклонил действие",
+    "identity_theft": "Владелец сообщил, что не открывал этот счёт",
 }
 INTERBANK_STATUS = {"sent": "Запрос отправлен, ждём ответ", "frozen": "Деньги заморожены в другом банке",
                     "gone": "Деньги уже сняты или ушли дальше", "answered": "Ответили автоматически"}
@@ -167,6 +178,7 @@ class LoginIn(BaseModel):
     role: str                     # client | analyst
     client_id: int | None = None
     pin: str = Field("", max_length=64)
+    employee: str = Field("", max_length=32)    # сотрудник банка (в демо — из списка EMPLOYEES)
 
 
 class SessionIn(BaseModel):
@@ -211,6 +223,7 @@ def log(actor: str, action: str, case_id: int | None = None, transfer_id: int | 
     conn.execute("INSERT INTO events(at,actor,action,case_id,transfer_id,details) VALUES(?,?,?,?,?,?)",
                  (_now().isoformat(), actor, action, case_id, transfer_id,
                   json.dumps(details, ensure_ascii=False) if details else None))
+    journal.seal(conn)          # отпечаток записи вместе с отпечатком предыдущей: подделку видно при проверке
 
 
 # ---------- Демо-данные ----------
@@ -279,7 +292,9 @@ def _own_case(client: dict, case_id: int, kind: str):
 def demo_clients():
     """Персонажи для показа: под ними входит экран клиента."""
     ensure_demo()
-    rows = conn.execute("SELECT id, name, kind FROM clients WHERE id BETWEEN 1001 AND 1999 ORDER BY id").fetchall()
+    # Второй счёт на имя персонажа (в демо — открытый без его ведома) отдельным персонажем не показывается.
+    rows = conn.execute("""SELECT id, name, kind FROM clients WHERE id BETWEEN 1001 AND 1999 AND owner_id IS NULL
+                           ORDER BY id""").fetchall()
     # Счета в другом банке нужны как получатели и отправители переводов, войти под ними нельзя.
     return [{"id": r["id"], "name": i18n.name(r["id"], r["name"]), "external": r["kind"] == "external"} for r in rows]
 
@@ -297,10 +312,11 @@ def login(body: LoginIn, request: Request, response: Response):
         if not secrets.compare_digest(body.pin.encode(), ANALYST_PIN.encode()):
             _pin_failures.append((now, ip))
             raise HTTPException(401, "Неверный код доступа")
-        s = {"role": "analyst", "name": "Сотрудник банка"}
+        emp = body.employee if body.employee in EMPLOYEES else next(iter(EMPLOYEES))
+        s = {"role": "analyst", "name": EMPLOYEES[emp], "employee": emp}
     elif body.role == "client":
         c = _client(body.client_id or 0)
-        if not 1001 <= c["id"] <= 1999 or c["kind"] == "external":
+        if not 1001 <= c["id"] <= 1999 or c["kind"] == "external" or c["owner_id"]:
             raise HTTPException(403, "Войти можно только под демо-персонажем")
         s = {"role": "client", "client_id": c["id"], "name": c["name"]}
     else:
@@ -331,11 +347,40 @@ def me(s: dict = Depends(session)):
     return s
 
 
+class EmployeeIn(BaseModel):
+    employee: str = Field(max_length=32)
+
+
+@app.post("/analyst/employee")
+def switch_employee(body: EmployeeIn, s: dict = Depends(as_analyst)):
+    """Демо: войти как другой сотрудник, чтобы подтвердить действие вторым ключом. В банке у каждого свой вход."""
+    if body.employee not in EMPLOYEES:
+        raise HTTPException(400, "Нет такого сотрудника")
+    s["employee"], s["name"] = body.employee, EMPLOYEES[body.employee]
+    return {"employee": body.employee, "name": s["name"], "employees": EMPLOYEES}
+
+
+@app.get("/analyst/employees")
+def employees(s: dict = Depends(as_analyst)):
+    return {"employee": s.get("employee"), "name": s["name"], "employees": EMPLOYEES}
+
+
 # ---------- Экран клиента: счёт и переводы ----------
 
 @app.get("/", include_in_schema=False)
+def landing():
+    """Стартовая страница: что это за проект, главные цифры, карта защит и «Показ за 3 минуты»."""
+    return FileResponse(os.path.join(STATIC, "landing.html"))
+
+
+@app.get("/client", include_in_schema=False)
 def client_app():
     return FileResponse(os.path.join(STATIC, "index.html"))
+
+
+@app.get("/tour.js", include_in_schema=False)
+def tour_script():
+    return FileResponse(os.path.join(STATIC, "tour.js"), media_type="text/javascript")
 
 
 def _refresh_status(cid: int) -> str:
@@ -430,6 +475,9 @@ def client_feed(cid: int, s: dict = Depends(session)):
             "kind": c["kind"], "activity": c["activity"],
             "rental": _rental_view(cid) if c["kind"] == "ip" and c["status"] != "blocked" else None,
             "casino": _casino_view(cid) if c["status"] != "blocked" else None,
+            "own_accounts": _own_accounts(cid),
+            "data_access": [{"at": r["at"], "reason": r["reason"]} for r in conn.execute(
+                "SELECT reason, at FROM data_access WHERE client_id=? ORDER BY id DESC LIMIT 10", (cid,))],
             "call": _call_info(cid),
             "complaints": _complaints_view(cid),
             "self_report": _self_report_view(cid),
@@ -864,7 +912,7 @@ def _refundable(case) -> int:
     return max(0, min(case["frozen"], owed, on_account))
 
 
-def _refund(case, actor: str) -> dict:
+def _refund(case, actor: str, employee: str | None = None) -> dict:
     """Возвращает пострадавшему деньги из цепочки, которые остались на счёте. Больше, чем он перевёл, не уйдёт."""
     amount = _refundable(case)
     if not amount:
@@ -876,7 +924,8 @@ def _refund(case, actor: str) -> dict:
     _move(case["client_id"], p["complainant_id"], amount)
     conn.execute("UPDATE cases SET frozen = frozen - ? WHERE id=?", (amount, case["id"]))
     log(actor, "refunded", case["id"], cur.lastrowid, amount=amount,
-        text=f"Пострадавшему возвращено {_money(amount)}" + (": клиент вернул сам" if actor != "analyst" else ""))
+        text=f"Пострадавшему возвращено {_money(amount)}" + (": клиент вернул сам" if actor != "analyst" else ""),
+        **({"employee": employee} if employee else {}))
     return {"status": "refunded", "amount": amount}
 
 
@@ -896,7 +945,14 @@ def refund_by_analyst(case_id: int, s: dict = Depends(as_analyst)):
     case = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
     if not case:
         raise HTTPException(404, "Случай не найден")
-    _refund(case, "analyst")
+    amount = _refundable(case)
+    if not amount:
+        raise HTTPException(409, t("refund_none"))
+    if amount >= TWO_KEY_REFUND:
+        # Крупный возврат один сотрудник не проводит: так деньги нельзя увести «возвратом» на подставной счёт.
+        _ask_second_key("refund", case_id, f"Вернуть пострадавшему {_money(amount)}", {}, s, case_id)
+        return _analyst_case(case_id)
+    _refund(case, "analyst", s["name"])
     return _analyst_case(case_id)
 
 
@@ -1273,6 +1329,16 @@ def verify_certificate(code: str):
     ok = bool(re.fullmatch(r"[0-9A-F]{8}", code))
     row = conn.execute("SELECT * FROM clearances WHERE code=?", (code,)).fetchone() if ok else None
     report = conn.execute("SELECT * FROM self_reports WHERE code=?", (code,)).fetchone() if ok and not row else None
+    claim = conn.execute("SELECT * FROM account_claims WHERE code=?", (code,)).fetchone() if ok and not (row or report) else None
+    if claim:
+        # Подтверждение «счёт открыт без моего ведома»: номер, дата и имя, без подробностей.
+        c = _client(claim["owner_id"])
+        body = f"""<h1>{escape(t("claim.check"))}</h1><p class="ok">{escape(t("claim.valid"))}</p>
+<dl><dt>{escape(t("cert.number"))}</dt><dd>{escape(_claim_number(claim))}</dd>
+<dt>{escape(t("claim.when"))}</dt><dd>{escape(claim["at"][:16].replace("T", " "))}</dd>
+<dt>{escape(t("cert.client"))}</dt><dd>{escape(i18n.name(c["id"], c["name"]).split(" (")[0])}</dd></dl>
+<div class="demo">{escape(t("cert.demo"))}</div>"""
+        return _page(t("claim.check"), body)
     if report:
         # Подтверждение обращения: кто и когда сам сообщил банку. Подробностей страница не показывает.
         c = _client(report["client_id"])
@@ -1752,6 +1818,7 @@ def _analyst_row(case) -> dict:
         "scope": case["scope"] if case["kind"] == "block" else None,
         "frozen": case["frozen"],
         "self_reported": json.loads(case["reasons"])[0].get("code") == "self_report",
+        "second_key": bool(_pending_approval("refund", case["id"]) or _pending_approval("release", case["id"])),
     }
 
 
@@ -1800,6 +1867,8 @@ def _history(case_id: int) -> list[dict]:
         details = json.loads(e["details"]) if e["details"] else {}
         who = {"system": "Система", "analyst": "Сотрудник банка"}.get(
             e["actor"], e["actor"][5:] if e["actor"].startswith("bank:") else "Клиент")
+        if e["actor"] == "analyst" and details.get("employee"):
+            who = f"Сотрудник банка ({details['employee']})"
         out.append({"at": e["at"], "who": who, "action": e["action"],
                     "text": details.get("text") or EVENT_TEXT.get(e["action"], e["action"]), "details": details})
     return out
@@ -1818,6 +1887,10 @@ def _analyst_case(case_id: int) -> dict:
         "client_kind": client["kind"], "activity": client["activity"],
         "rental": rental,
         "casino": engine.casino_signal(conn, client["id"], _now()),
+        "approval": _approval_view(_pending_approval("refund", case_id) or _pending_approval("release", case_id)),
+        "pii": _pii_masked(client["id"]),
+        "pii_log": _pii_log(client["id"]),
+        "identity": _identity_view(client),
         "network": next(({"key": n["key"], "accounts": len(n["members"]), "farms": len(n["farms"])}
                          for n in metrics.networks(conn, _now()) if client["id"] in n["members"]), None),
         "graph": _graph(case, linked, rental),
@@ -2042,11 +2115,24 @@ def decide(case_id: int, body: DecisionIn, s: dict = Depends(as_analyst)):
     comment = body.comment.strip()[:1000]
     if body.decision == "reject" and len(comment) < 10:
         raise HTTPException(400, "При отказе напишите клиенту причину")
+    if body.decision == "approve" and engine.assess_role(conn, case["client_id"], case, _now())["verdict"] == "organizer":
+        # Отпустить деньги того, кто по правилам похож на организатора, один сотрудник не может.
+        what = "Снять ограничения" if case["kind"] == "block" else "Разрешить перевод"
+        _ask_second_key("release", case_id, f"{what}, хотя клиент по правилам похож на организатора",
+                        {"comment": comment}, s, case_id)
+        return _analyst_case(case_id)
+    _decide(case, body.decision, comment, s["name"])
+    return _analyst_case(case_id)
+
+
+def _decide(case, decision: str, comment: str, employee: str):
+    """Само решение: снять или оставить ограничения, разрешить или отменить перевод."""
+    case_id = case["id"]
     if case["kind"] == "block":
-        status = "unblocked" if body.decision == "approve" else "kept"
+        status = "unblocked" if decision == "approve" else "kept"
     else:
         tr = conn.execute("SELECT * FROM transfers WHERE id=?", (case["transfer_id"],)).fetchone()
-        if body.decision == "approve":
+        if decision == "approve":
             if _client(tr["sender_id"])["status"] != "active":
                 raise HTTPException(409, "Счёт клиента приостановлен: перевод можно только отменить. "
                                          "Сначала разберите блокировку")
@@ -2068,10 +2154,9 @@ def decide(case_id: int, body: DecisionIn, s: dict = Depends(as_analyst)):
     # Вместе с решением сохраняется подсказка, которую видел сотрудник: её потом не пересчитать задним числом.
     role = engine.assess_role(conn, case["client_id"], case, _now())
     log("analyst", "decision", case_id, case["transfer_id"], text=f"Решение: {STATUS_TEXT[status]}",
-        status=status, comment=comment or None, role=role["label"], role_score=role["score"])
+        status=status, comment=comment or None, role=role["label"], role_score=role["score"], employee=employee)
     if cleared:
         _issue_clearance(case)
-    return _analyst_case(case_id)
 
 
 @app.get("/quality", include_in_schema=False)
@@ -2174,6 +2259,267 @@ def suspend_rental(cid: int, s: dict = Depends(as_analyst)):
                     "Операции приостановлены сотрудником: признаки «аренды ИП»")
 
 
+# ---------- Правило двух ключей ----------
+# Крупный возврат пострадавшему, приостановка целой сети и решение в пользу «похожего на организатора» один
+# сотрудник не проводит: первый просит, второй (другой человек) подтверждает. Так сотрудник-сообщник не уведёт
+# деньги и не отпустит организатора в одиночку.
+
+def _pending_approval(kind: str, target):
+    return conn.execute("SELECT * FROM approvals WHERE kind=? AND target=? AND status='pending'",
+                        (kind, str(target))).fetchone()
+
+
+def _approval_view(a) -> dict | None:
+    if not a:
+        return None
+    return {k: a[k] for k in ("id", "kind", "target", "summary", "requested_by", "requested_at", "status",
+                              "decided_by", "decided_at")}
+
+
+def _ask_second_key(kind: str, target, summary: str, params: dict, s: dict, case_id: int | None = None) -> int:
+    if _pending_approval(kind, target):
+        raise HTTPException(409, "Это действие уже ждёт подтверждения второго сотрудника")
+    aid = conn.execute(
+        "INSERT INTO approvals(kind,target,summary,params,requested_by,requested_at) VALUES(?,?,?,?,?,?)",
+        (kind, str(target), summary, json.dumps(params, ensure_ascii=False), s["name"], _now().isoformat())).lastrowid
+    log("analyst", "approval_requested", case_id, None, text=f"{summary}: ждёт подтверждения второго сотрудника",
+        employee=s["name"])
+    return aid
+
+
+def _approval(aid: int):
+    a = conn.execute("SELECT * FROM approvals WHERE id=?", (aid,)).fetchone()
+    if not a:
+        raise HTTPException(404, "Запрос не найден")
+    if a["status"] != "pending":
+        raise HTTPException(409, "По этому запросу уже принято решение")
+    return a
+
+
+@app.get("/analyst/approvals")
+def approvals(s: dict = Depends(as_analyst)):
+    """Действия, которые ждут второго сотрудника."""
+    return [_approval_view(a) for a in conn.execute("SELECT * FROM approvals WHERE status='pending' ORDER BY id")]
+
+
+@app.post("/analyst/approvals/{aid}/confirm")
+def approval_confirm(aid: int, s: dict = Depends(as_analyst)):
+    """Второй сотрудник подтверждает действие. Тот, кто просил, подтвердить сам не может."""
+    a = _approval(aid)
+    if a["requested_by"] == s["name"]:
+        raise HTTPException(409, "Подтвердить должен другой сотрудник: правило двух ключей")
+    params = json.loads(a["params"] or "{}")
+    case_id = int(a["target"]) if a["kind"] in ("refund", "release") else None
+    if a["kind"] == "refund":
+        _refund(conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone(), "analyst", s["name"])
+    elif a["kind"] == "release":
+        case = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+        if not _pending(case):
+            raise HTTPException(409, "По этому случаю решение уже принято")
+        _decide(case, "approve", params.get("comment", ""), s["name"])
+    else:
+        _suspend_network(a["target"])
+    conn.execute("UPDATE approvals SET status='done', decided_by=?, decided_at=? WHERE id=?",
+                 (s["name"], _now().isoformat(), aid))
+    log("analyst", "approval_confirmed", case_id, None, employee=s["name"], requested_by=a["requested_by"],
+        text=f"{a['summary']}: подтвердил второй сотрудник ({s['name']}, запросил(а) {a['requested_by']})")
+    return {"approval": _approval_view(conn.execute("SELECT * FROM approvals WHERE id=?", (aid,)).fetchone()),
+            "case": _analyst_case(case_id) if case_id else None}
+
+
+@app.post("/analyst/approvals/{aid}/reject")
+def approval_reject(aid: int, s: dict = Depends(as_analyst)):
+    """Второй сотрудник отклоняет действие (или первый отменяет свою просьбу)."""
+    a = _approval(aid)
+    conn.execute("UPDATE approvals SET status='rejected', decided_by=?, decided_at=? WHERE id=?",
+                 (s["name"], _now().isoformat(), aid))
+    own = a["requested_by"] == s["name"]
+    case_id = int(a["target"]) if a["kind"] in ("refund", "release") else None
+    log("analyst", "approval_rejected", case_id, None, employee=s["name"],
+        text=f"{a['summary']}: " + ("запрос отменён" if own else f"отклонил второй сотрудник ({s['name']})"))
+    return {"approval": _approval_view(conn.execute("SELECT * FROM approvals WHERE id=?", (aid,)).fetchone())}
+
+
+# ---------- Скрытые персональные данные и журнал просмотров ----------
+# Сотрудник по умолчанию видит ИИН и телефон клиента скрытыми. Открыть их можно, только указав причину;
+# каждый просмотр пишется в журнал, и клиент видит в приложении, когда и зачем банк открывал его данные.
+
+class PiiIn(BaseModel):
+    reason: str = Field(max_length=16)
+
+
+def _pii(cid: int) -> dict:
+    """ИИН и телефон клиента. В демо настоящих данных нет: они получаются из номера клиента."""
+    d = str(int(hashlib.sha256(f"demo-{cid}".encode()).hexdigest()[:16], 16)).rjust(20, "0")
+    iin = f"{60 + cid % 40:02d}{cid % 12 + 1:02d}{cid % 28 + 1:02d}" + d[:6]
+    return {"iin": iin, "phone": f"+7 7{d[6:8]} {d[8:11]} {d[11:13]} {d[13:15]}"}
+
+
+def _pii_masked(cid: int) -> dict:
+    p = _pii(cid)
+    return {"iin": p["iin"][:2] + "••••••" + p["iin"][-4:], "phone": p["phone"][:4] + "•• ••• •• " + p["phone"][-2:]}
+
+
+def _open_pii(cid: int, employee: str, reason: str) -> dict:
+    conn.execute("INSERT INTO data_access(client_id,employee,reason,at) VALUES(?,?,?,?)",
+                 (cid, employee, reason, _now().isoformat()))
+    log("analyst", "pii_viewed", None, None, client=cid, reason=reason, employee=employee,
+        text=f"{employee} открыл(а) персональные данные клиента: {PII_REASONS[reason].lower()}")
+    return _pii(cid)
+
+
+def _pii_log(cid: int, limit: int = 5) -> list[dict]:
+    return [dict(r) | {"reason_text": PII_REASONS[r["reason"]]} for r in conn.execute(
+        "SELECT employee, reason, at FROM data_access WHERE client_id=? ORDER BY id DESC LIMIT ?", (cid, limit))]
+
+
+@app.post("/analyst/clients/{cid}/pii")
+def open_pii(cid: int, body: PiiIn, s: dict = Depends(as_analyst)):
+    """Открыть ИИН и телефон клиента. Без причины нельзя; причина и сотрудник остаются в журнале."""
+    _client(cid)
+    if body.reason not in PII_REASONS or body.reason == "afc":
+        raise HTTPException(400, "Укажите причину: " + ", ".join(v.lower() for k, v in PII_REASONS.items() if k != "afc"))
+    return _open_pii(cid, s["name"], body.reason) | {"log": _pii_log(cid)}
+
+
+# ---------- Журнал действий: проверка целостности ----------
+
+@app.get("/analyst/journal")
+def journal_check(s: dict = Depends(as_analyst)):
+    """Проверка, что записи журнала не меняли и не удаляли задним числом."""
+    return journal.verify(conn) | {"checked_at": _now().isoformat()}
+
+
+@app.post("/demo/journal/tamper")
+def journal_tamper(s: dict = Depends(as_analyst)):
+    """Демо: «сотрудник-сообщник» правит запись прямо в базе, в обход приложения. Проверка журнала это заметит.
+    Вернуть журнал — «Сбросить демо»."""
+    row = conn.execute("""SELECT * FROM events WHERE action IN ('refunded','decision','blocked') AND details IS NOT NULL
+                          ORDER BY id DESC LIMIT 1""").fetchone() or \
+        conn.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1").fetchone()
+    if not row:
+        raise HTTPException(409, "Журнал пуст")
+    details = json.loads(row["details"] or "{}")
+    details["text"] = (details.get("text") or EVENT_TEXT.get(row["action"], row["action"])) + " (запись изменена)"
+    conn.execute("UPDATE events SET details=? WHERE id=?", (json.dumps(details, ensure_ascii=False), row["id"]))
+    return {"id": row["id"], "action": row["action"], "at": row["at"], "text": details["text"]}
+
+
+# ---------- «Счёт открыли без меня» ----------
+# На имя клиента удалённо (по поддельному видео) открыли ещё один счёт, и через него пошли деньги незнакомцев.
+# Клиент узнаёт об этом сразу на прежних устройствах и одной кнопкой «Это не я» закрывает счёт: банк фиксирует
+# кражу личности, а не делает человека дроппером, и выдаёт подтверждение с датой для полиции и суда.
+
+class ClaimIn(BaseModel):
+    answer: str     # mine | not_me
+
+
+def _identity_view(c) -> dict | None:
+    """Для сотрудника: счёт открыт на имя другого клиента — что известно об открытии и что ответил владелец."""
+    if not c["owner_id"]:
+        return None
+    owner = _client(c["owner_id"])
+    claim = conn.execute("SELECT * FROM account_claims WHERE account_id=?", (c["id"],)).fetchone()
+    dev = conn.execute("SELECT model FROM devices WHERE device_id=? LIMIT 1", (c["opened_device"],)).fetchone()
+    own = conn.execute("SELECT 1 FROM devices WHERE client_id=? AND device_id=?", (owner["id"], c["opened_device"])).fetchone()
+    return {"owner_id": owner["id"], "owner": owner["name"].split(" (")[0], "opened_at": c["account_opened_at"],
+            "via": c["opened_via"], "device": dev["model"] if dev else None, "owner_device": bool(own),
+            "answer": claim["answer"] if claim else None, "answered_at": claim["at"] if claim else None}
+
+
+def _claim_number(row) -> str:
+    return f"КЛ-{row['at'][:4]}-{row['account_id']:05d}"
+
+
+def _own_accounts(cid: int) -> list[dict]:
+    """Для клиента: счета, открытые на его имя удалённо, и что он о них ответил."""
+    out = []
+    mine = {d["device_id"] for d in conn.execute("SELECT device_id FROM devices WHERE client_id=?", (cid,))}
+    for c in conn.execute("SELECT * FROM clients WHERE owner_id=? ORDER BY account_opened_at", (cid,)).fetchall():
+        claim = conn.execute("SELECT * FROM account_claims WHERE account_id=?", (c["id"],)).fetchone()
+        if claim and claim["answer"] == "mine":
+            continue
+        dev = conn.execute("SELECT model FROM devices WHERE device_id=? LIMIT 1", (c["opened_device"],)).fetchone()
+        came = conn.execute("""SELECT COALESCE(SUM(amount),0) AS s, COUNT(DISTINCT sender_id) AS n FROM transfers
+                               WHERE receiver_id=? AND status='done' AND return_of IS NULL""", (c["id"],)).fetchone()
+        out.append({"id": c["id"], "opened_at": c["account_opened_at"], "via": c["opened_via"],
+                    "device": dev["model"] if dev else None, "own_device": c["opened_device"] in mine,
+                    "inflow": came["s"], "senders": came["n"], "status": c["status"],
+                    "answer": claim["answer"] if claim else None, "answered_at": claim["at"] if claim else None,
+                    "number": _claim_number(claim) if claim else None, "code": claim["code"] if claim else None,
+                    "frozen": conn.execute("SELECT frozen FROM cases WHERE id=?", (claim["case_id"],)).fetchone()["frozen"]
+                              if claim and claim["case_id"] else 0})
+    return out
+
+
+@app.post("/accounts/{aid}/claim")
+def claim_account(aid: int, body: ClaimIn, s: dict = Depends(as_client)):
+    """Клиент отвечает, открывал ли он счёт на своё имя. «Это не я» — счёт сразу приостанавливается."""
+    cid, now = s["client_id"], _now()
+    acc = conn.execute("SELECT * FROM clients WHERE id=?", (aid,)).fetchone()
+    if not acc or acc["owner_id"] != cid:
+        raise HTTPException(404, t("client_not_found"))
+    if body.answer not in ("mine", "not_me"):
+        raise HTTPException(400, t("bad_input"))
+    if conn.execute("SELECT 1 FROM account_claims WHERE account_id=?", (aid,)).fetchone():
+        raise HTTPException(409, t("claim.answered"))
+    if body.answer == "mine":
+        conn.execute("INSERT INTO account_claims(account_id,owner_id,answer,at) VALUES(?,?,?,?)",
+                     (aid, cid, "mine", now.isoformat()))
+        log(f"client:{cid}", "account_confirmed", None, None, account=aid)
+        return {"accounts": _own_accounts(cid)}
+    while True:
+        code = secrets.token_hex(4).upper()
+        if not conn.execute("""SELECT 1 FROM clearances WHERE code=? UNION SELECT 1 FROM self_reports WHERE code=?
+                               UNION SELECT 1 FROM account_claims WHERE code=?""", (code, code, code)).fetchone():
+            break
+    frozen = max(0, _available(aid))
+    reasons = [{"code": "identity_theft", "points": 0,
+                "text": "Владелец сообщил, что не открывал этот счёт: похоже на кражу личности "
+                        "(счёт открыт удалённо, с чужого устройства)"}]
+    inc = conn.execute("SELECT id FROM transfers WHERE receiver_id=? ORDER BY created_at DESC, id DESC LIMIT 1",
+                       (aid,)).fetchone()
+    case_id = conn.execute(
+        """INSERT INTO cases(client_id,transfer_id,incoming_transfer_id,kind,score,reasons,status,explanation,
+                             submitted_at,due_at,created_at,scope,frozen)
+           VALUES(?,NULL,?,'block',0,?,'under_review',?,?,?,?,'full',?)""",
+        (aid, inc["id"] if inc else None, json.dumps(reasons, ensure_ascii=False),
+         f"Владелец ({i18n.name(cid, _client(cid)['name']).split(' (')[0]}) сообщил в приложении, что не открывал счёт",
+         now.isoformat(), (now + timedelta(days=APPEAL_SLA_DAYS)).isoformat(), now.isoformat(), frozen)).lastrowid
+    _refresh_status(aid)
+    conn.execute("INSERT INTO account_claims(account_id,owner_id,answer,code,case_id,at) VALUES(?,?,?,?,?,?)",
+                 (aid, cid, "not_me", code, case_id, now.isoformat()))
+    log(f"client:{cid}", "identity_theft", case_id, None, account=aid,
+        text=f"Владелец сообщил, что не открывал счёт: счёт приостановлен, заморожено {_money(frozen)}")
+    return {"accounts": _own_accounts(cid), "text": t("claim.done")}
+
+
+@app.get("/clients/{cid}/identity-claim/{aid}", include_in_schema=False)
+def identity_claim_page(cid: int, aid: int, request: Request, s: dict = Depends(session)):
+    """Подтверждение: клиент сообщил банку, что не открывал счёт. Его можно приложить к заявлению в полицию или в суд."""
+    c = _own_client(s, cid)
+    row = conn.execute("SELECT * FROM account_claims WHERE account_id=? AND owner_id=? AND answer='not_me'",
+                       (aid, cid)).fetchone()
+    if not row:
+        raise HTTPException(404, t("claim.none"))
+    acc = _client(aid)
+    dev = conn.execute("SELECT model FROM devices WHERE device_id=? LIMIT 1", (acc["opened_device"],)).fetchone()
+    case = conn.execute("SELECT * FROM cases WHERE id=?", (row["case_id"],)).fetchone()
+    verify = str(request.base_url) + f"verify/{row['code']}"
+    d = lambda x: x[:16].replace("T", " ")  # noqa: E731
+    body = f"""<h1>{escape(t("claim.title"))}</h1>
+<div class="muted">№ {escape(_claim_number(row))} · {escape(d(row["at"]))}</div>
+<dl><dt>{escape(t("cert.client"))}</dt><dd>{escape(i18n.name(c["id"], c["name"]).split(" (")[0])}</dd>
+<dt>{escape(t("claim.opened"))}</dt><dd>{escape(d(acc["account_opened_at"]))} · {escape(t("claim.remote"))}{(" · " + escape(dev["model"])) if dev else ""}</dd>
+<dt>{escape(t("claim.when"))}</dt><dd>{escape(d(row["at"]))}</dd>
+<dt>{escape(t("claim.action"))}</dt><dd>{escape(t("claim.frozen", m=_money(case["frozen"] if case else 0)))}</dd></dl>
+<p>{escape(t("claim.text"))}</p>
+<p class="muted">{escape(t("sr.verify"))}<br><b>{escape(verify)}</b><br>{escape(t("cert.code"))}: <b>{row["code"]}</b></p>
+<button onclick="print()">{escape(t("cert.print"))}</button>
+<div class="demo">{escape(t("cert.demo"))}</div>"""
+    return _page(t("claim.title"), body)
+
+
 # ---------- Сети дропперов и дроп-фермы ----------
 # Сеть — счета, связанные общим «дроп-телефоном» или переводами между подозрительными счетами (metrics.networks).
 # Сотрудник видит её целиком: телефоны, счета, граф денег, и одной кнопкой приостанавливает счета на дроп-телефонах.
@@ -2219,6 +2565,7 @@ def _network_view(n: dict, full: bool = False) -> dict:
         "inflow": inflow["s"], "senders": inflow["n"],
         "blocked": sum(1 for c in clients.values() if c["status"] == "blocked"),
         "to_suspend": sum(1 for i in phones if clients[i]["status"] == "active"),
+        "approval": _approval_view(_pending_approval("network", n["key"])),
     }
     if not full:
         return view
@@ -2267,6 +2614,15 @@ def suspend_network(key: str, s: dict = Depends(as_analyst)):
     Остальные счета сети (например, невольные участники, переславшие деньги по просьбе мошенника) сотрудник
     разбирает по одному: у них может быть соразмерная блокировка.
     """
+    view = _network_view(_network(key))
+    if not view["to_suspend"]:
+        raise HTTPException(409, "Все счета на дроп-телефонах этой сети уже приостановлены или ограничены")
+    # Сразу много счетов один сотрудник не закрывает: нужен второй.
+    _ask_second_key("network", key, f"Приостановить счета на дроп-телефонах сети: {view['to_suspend']}", {}, s)
+    return _network_view(_network(key), full=True)
+
+
+def _suspend_network(key: str) -> int:
     n = _network(key)
     done: list[int] = []
     for f in n["farms"]:
@@ -2280,7 +2636,7 @@ def suspend_network(key: str, s: dict = Depends(as_analyst)):
             done.append(cid)
     if not done:
         raise HTTPException(409, "Все счета на дроп-телефонах этой сети уже приостановлены или ограничены")
-    return {"suspended": len(done)} | _network_view(_network(key), full=True)
+    return len(done)
 
 
 @app.post("/analyst/networks/{key}/report")
@@ -2292,7 +2648,7 @@ def network_report(key: str, s: dict = Depends(as_analyst)):
         "generated_at": _now().isoformat(), "generated_by": s["name"],
         "network": {k: v[k] for k in ("key", "accounts", "inflow", "senders", "blocked", "center")},
         "accounts": [{k: m[k] for k in ("id", "name", "status", "kind", "age_days", "marks", "phones", "case_id")}
-                     for m in v["members"]],
+                     | _open_pii(m["id"], s["name"], "afc") for m in v["members"]],
         "devices": [{"n": f["n"], "device_id": f["device_id"], "model": f["model"], "factors": f["factors"],
                      "accounts": [a["id"] for a in f["accounts"]]} for f in v["farms"]],
         "transfers": [{k: e[k] for k in ("from", "to", "amount", "count", "status", "returned")}
@@ -2449,7 +2805,8 @@ def antifraud_report(case_id: int, s: dict = Depends(as_analyst)):
                  "status": card["status"], "status_text": card["status_text"], "score": card["score"],
                  "decision_comment": card["decision_comment"], "decided_at": card["decided_at"]},
         "client": {"id": client["id"], "name": client["name"], "account_opened_at": client["account_opened_at"],
-                   "status": client["status"], "role_hint": card["role"]["label"]},
+                   "status": client["status"], "role_hint": card["role"]["label"],
+                   **_open_pii(client["id"], s["name"], "afc")},
         "operations": [{"id": o["id"], "created_at": o["created_at"], "amount_kzt": o["amount"], "status": o["status"],
                         "sender": o["sender"], "receiver": o["receiver"]} for o in ops],
         "reasons": [{"code": r.get("code"), "points": r.get("points"), "text": r.get("text")} for r in card["reasons"]],

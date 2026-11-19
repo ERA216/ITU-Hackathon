@@ -82,6 +82,13 @@
   .legend i { display:inline-block; width:24px; border-top:2px solid #587366; }
   .legend i.wait { border-top:2px dashed #b07d00; } .legend i.stop { border-top:2px dashed #9fb3aa; }
   .legend b { display:inline-block; width:14px; height:12px; border-radius:3px; border:1px solid; }
+  /* Правило двух ключей и скрытые данные. */
+  .emp { font-size:13px; color:var(--muted); margin:0 0 10px; }
+  .emp b { color:var(--ink); }
+  .twokey { background:var(--amber-bg); color:var(--amber); border-radius:12px; padding:10px 12px; margin-top:10px; }
+  .pii { margin-top:6px; font-size:14px; }
+  .pii select { font:inherit; font-size:14px; padding:6px 8px; border-radius:10px; border:1px solid var(--line); background:#fff; }
+  .pii .act { flex:0 0 auto; padding:7px 12px; }
   /* Общее верхнее меню: четыре страницы проекта, текущая выделена. */
   .topbar { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:10px 20px; background:#fff; border-bottom:1px solid #d6eadf; }
   .topbar .brand { font-weight:700; font-size:17px; color:#1d1d1e; text-decoration:none; white-space:nowrap; }
@@ -100,10 +107,13 @@
 </head>
 <body>
 <header class="topbar"><a class="brand" href="/">Чистый счёт</a>
-  <nav class="pages" aria-label="Страницы проекта"><a href="/">Экран клиента</a><a href="/analyst" aria-current="page">Панель аналитика</a><a href="/analyst/stats">Эффективность</a><a href="/quality">Качество движка</a></nav>
+  <nav class="pages" aria-label="Страницы проекта"><a href="/client">Экран клиента</a><a href="/analyst" aria-current="page">Панель аналитика</a><a href="/analyst/stats">Эффективность</a><a href="/quality">Качество движка</a></nav>
   <span class="tools"><button class="hbtn" id="reset" hidden>Сбросить демо</button><button class="hbtn" id="logout" hidden>Выйти</button></span></header>
 <form class="card login" id="login" hidden>
   <h2>Вход для сотрудника банка</h2>
+  <label for="empSel" class="muted">Сотрудник</label>
+  <select id="empSel" style="width:100%;padding:12px 14px;border:1px solid transparent;background:var(--fill);border-radius:12px;font:inherit;margin:4px 0 10px">
+    <option value="aruzhan">Аружан С.</option><option value="medet">Медет К.</option></select>
   <label for="pin" class="muted">Код доступа</label>
   <input id="pin" type="password" inputmode="numeric" autocomplete="off" required>
   <button class="act approve" style="margin-top:10px">Войти</button>
@@ -111,6 +121,7 @@
 </form>
 <div class="wrap" id="wrap" hidden>
   <div>
+    <div class="emp" id="emp"></div>
     <div class="tabs" role="tablist">
       <button data-tab="pending" aria-selected="true">Ждут решения</button><button data-tab="all">Все</button><button data-tab="linked">Связанные счета</button>
     </div>
@@ -130,7 +141,7 @@ const KIND = {block: 'Блокировка счёта', intercept: 'Перево
 const kind = c => c.kind === 'block' && c.scope === 'partial' ? 'Заморожена спорная сумма' : KIND[c.kind];
 const GUARD = {notified: 'узнал(а) об остановке', asked: 'клиент настаивает, ждём подтверждения',
                confirmed: 'подтвердил(а) перевод, решение за сотрудником', cancelled: 'отменил(а) перевод'};
-let current = null, currentNet = null;
+let current = null, currentNet = null, me = {name: '', employees: {}};
 const plural = (n, one, few, many) => n % 10 === 1 && n % 100 !== 11 ? one : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? few : many;
 
 async function api(path, body) {
@@ -170,6 +181,7 @@ async function loadQueue() {
       ${c.overdue ? '<span class="pill late">Срок ответа прошёл</span>' : ''}
       ${c.from_complaint ? '<span class="pill">По жалобе</span>' : ''}
       ${c.self_reported ? '<span class="pill unwitting">Сообщил сам</span>' : ''}
+      ${c.second_key ? '<span class="pill wait">Ждёт второго сотрудника</span>' : ''}
     </button>`).join('') || `<div class="card muted">${tab === 'pending' ? 'Все случаи разобраны.' : 'Случаев нет.'}</div>`;
   $('queue').querySelectorAll('.item').forEach(b => b.onclick = () => open(+b.dataset.id));
 }
@@ -282,8 +294,9 @@ async function openNetwork(key) {
       <div class="muted">Это подсказка по правилам. Решение принимает сотрудник.</div>
     </div>
     <div class="card decision"><h2>Решение</h2>
-      ${n.to_suspend ? `<p>На дроп-телефонах сети активны ${n.to_suspend} ${plural(n.to_suspend, 'счёт', 'счёта', 'счетов')}: ими, похоже, управляет один человек.</p>
-        <div class="actions"><button class="act reject" id="netSuspend">Приостановить счета на дроп-телефонах (${n.to_suspend})</button></div>`
+      ${n.approval ? approvalBox(n.approval) : n.to_suspend ? `<p>На дроп-телефонах сети активны ${n.to_suspend} ${plural(n.to_suspend, 'счёт', 'счёта', 'счетов')}: ими, похоже, управляет один человек.</p>
+        <div class="actions"><button class="act reject" id="netSuspend">Приостановить счета на дроп-телефонах (${n.to_suspend})</button></div>
+        <p class="muted" style="margin:8px 0 0">Сразу много счетов один сотрудник не закрывает: приостановку подтверждает второй.</p>`
         : `<p class="muted">${n.farms.length ? 'Счета на дроп-телефонах уже приостановлены или ограничены.' : 'Дроп-телефонов в этой сети нет: счета разбираются по одному, через их случаи.'}</p>`}
       <p class="muted" style="margin:8px 0 0">Остальные счета сети, например невольных участников, сотрудник разбирает по одному: нажмите на счёт в списке или на графе.</p>
       <div id="err"></div>
@@ -306,6 +319,7 @@ async function openNetwork(key) {
       <button class="act" id="netReport" style="background:var(--line);max-width:320px">Выгрузить сведения о сети (JSON)</button>
     </div>`;
   if ($('graph')) drawGraph($('graph'), n.graph, null);
+  bindApproval(() => openNetwork(key));
   $('detail').querySelectorAll('[data-open]').forEach(b => b.onclick = () => open(+b.dataset.open));
   if ($('netSuspend')) $('netSuspend').onclick = async () => {
     $('netSuspend').disabled = true;
@@ -439,13 +453,20 @@ async function open(id) {
     <div class="card">
       <h2 style="font-size:19px">${esc(c.client)}</h2>
       <div class="muted">${kind(c)} · случай №${c.case_id} · ${c.client_kind === 'ip' ? `ИП${c.activity ? ', ' + esc(c.activity) : ''} · ` : ''}счёт открыт ${days(c.account_opened_at)} дн. назад</div>
+      <div class="pii" id="pii">ИИН <b id="piiIin">${esc(c.pii.iin)}</b> · телефон <b id="piiPhone">${esc(c.pii.phone)}</b>
+        <button class="linkbtn" id="piiShow">Показать</button>
+        <div class="actions" id="piiAsk" hidden><select id="piiReason"><option value="">Зачем открываете данные?</option>
+          <option value="contact">Связаться с клиентом</option><option value="appeal">Проверка документов по апелляции</option>
+          <option value="police">Запрос правоохранительных органов</option></select>
+          <button class="act approve" id="piiOpen">Открыть</button></div>
+        <div class="muted" id="piiNote">${c.pii_log.length ? 'Открывали: ' + c.pii_log.map(x => `${esc(x.employee)}, ${when(x.at)} (${esc(x.reason_text.toLowerCase())})`).join('; ') : 'Данные скрыты. Открыть можно с указанием причины: просмотр записывается, клиент видит его в приложении.'}</div></div>
       <p><span class="pill ${c.role.verdict}" style="font-size:14px;padding:4px 12px">${esc(c.role.label)}</span>
         ${c.overdue ? '<span class="pill late" style="font-size:14px;padding:4px 12px">Срок ответа прошёл</span>' : ''}</p>
       ${c.due_at && c.needs_decision ? `<div class="muted">Клиенту обещан ответ до ${when(c.due_at)}</div>` : ''}
       <div class="muted">Это подсказка по правилам ниже. Решение принимает сотрудник.</div>
     </div>
     <div class="card decision"><h2>Решение</h2>
-      ${c.needs_decision ? `
+      ${c.approval && c.approval.kind === 'release' ? approvalBox(c.approval) : c.needs_decision ? `
         <textarea id="comment" placeholder="Комментарий для клиента. При отказе обязателен."></textarea>
         <div class="actions"><button class="act approve" id="approve">${approve}</button><button class="act reject" id="reject">${reject}</button></div>
         <div id="err"></div>` : `
@@ -453,6 +474,11 @@ async function open(id) {
         ${c.decision_comment ? `<blockquote>${esc(c.decision_comment)}</blockquote>` : ''}
         ${c.certificate ? `<p class="muted">Справка № ${esc(c.certificate.number)} выдана ${when(c.certificate.issued_at)}${c.certificate.valid ? '' : ', отозвана ' + when(c.certificate.revoked_at)}. Проверка: <a href="/verify/${esc(c.certificate.code)}" target="_blank" rel="noopener">/verify/${esc(c.certificate.code)}</a></p>` : ''}`}
     </div>
+    ${c.identity ? `<div class="card linked"><h2>Счёт открыт на чужое имя</h2>
+      <p>${c.identity.answer === 'not_me' ? `Владелец <b>${esc(c.identity.owner)}</b> ${when(c.identity.answered_at)} сообщил в приложении: этот счёт он не открывал.` : `Счёт открыт на имя клиента <b>${esc(c.identity.owner)}</b>.`}</p>
+      <ul><li><span>Открыт ${when(c.identity.opened_at)} ${c.identity.via === 'remote' ? 'удалённо, по видео' : 'в отделении'}</span></li>
+        ${c.identity.device ? `<li><span>Устройство: ${esc(c.identity.device)}${c.identity.owner_device ? '' : ' — владелец с него никогда не входил'}</span></li>` : ''}</ul>
+      <p class="muted" style="margin:6px 0 0">Похоже на кражу личности: счёт открыли по чужим данным и поддельному видео. Владелец — не дроппер, его основной счёт не ограничен. Деньги на этом счёте заморожены.</p></div>` : ''}
     ${c.self_report ? `<div class="card"><h2>Клиент сам сообщил банку</h2>
       <p><b>${esc(c.self_report.kind_text)}</b></p>
       ${c.self_report.details ? `<blockquote>${esc(c.self_report.details)}</blockquote>` : ''}
@@ -511,8 +537,9 @@ async function open(id) {
       </li>`).join('')}</ol>
       ${c.complaint ? `<p style="margin:12px 0 0"><b>Пострадавшему возвращено ${money(c.complaint.returned)} из ${money(c.complaint.amount)}.</b>
         ${c.complaint.frozen ? ` Заморожено в цепочке: ${money(c.complaint.frozen)}.` : ''}</p>` : ''}
-      ${c.refundable ? `<button class="act approve" id="refund" style="max-width:420px;margin-top:10px">Вернуть пострадавшему ${money(c.refundable)} с этого счёта</button>
-        <p class="muted" style="margin:8px 0 0">В банке для этого нужно согласие владельца счёта либо решение суда или органа уголовного преследования. В демо это одна кнопка.</p>` : ''}
+      ${c.refundable && !(c.approval && c.approval.kind === 'refund') ? `<button class="act approve" id="refund" style="max-width:420px;margin-top:10px">Вернуть пострадавшему ${money(c.refundable)} с этого счёта</button>
+        <p class="muted" style="margin:8px 0 0">${c.refundable >= 100000 ? 'Возврат от 100 000 ₸ подтверждает второй сотрудник. ' : ''}В банке для этого нужно согласие владельца счёта либо решение суда или органа уголовного преследования. В демо это кнопка.</p>` : ''}
+      ${c.approval && c.approval.kind === 'refund' ? approvalBox(c.approval) : ''}
       </div>` : ''}
     <div class="grid2">
       <div class="card"><h2>Роль клиента: что учтено</h2>
@@ -538,6 +565,15 @@ async function open(id) {
     </div>
 `;
   if ($('graph')) drawGraph($('graph'), c.graph, c.case_id);
+  bindApproval(() => open(id));
+  $('piiShow').onclick = () => { $('piiAsk').hidden = false; $('piiShow').hidden = true; };
+  $('piiOpen').onclick = async () => {
+    try {
+      const p = await api(`/analyst/clients/${c.client_id}/pii`, {reason: $('piiReason').value});
+      $('piiIin').textContent = p.iin; $('piiPhone').textContent = p.phone; $('piiAsk').hidden = true;
+      $('piiNote').textContent = 'Просмотр записан в журнал с причиной. Клиент увидит его в приложении: «Кто смотрел мои данные».';
+    } catch (e) { $('piiNote').textContent = e.message; }
+  };
   $('detail').querySelectorAll('[data-open]').forEach(b => b.onclick = () => open(+b.dataset.open));
   $('detail').querySelectorAll('[data-net-card]').forEach(b => b.onclick = () => goNetwork(b.dataset.netCard));
   $('detail').querySelectorAll('[data-suspend-card]').forEach(b => b.onclick = async () => {
@@ -570,10 +606,41 @@ async function open(id) {
 }
 
 function showLogin() { $('login').hidden = false; for (const id of ['wrap', 'reset', 'logout']) $(id).hidden = true; }
-function showPanel() { $('login').hidden = true; for (const id of ['wrap', 'reset', 'logout']) $(id).hidden = false; loadQueue(); }
+function showPanel() { $('login').hidden = true; for (const id of ['wrap', 'reset', 'logout']) $(id).hidden = false; loadMe(); loadQueue(); if (window.tourResume) tourResume(); }
+// Кто сейчас работает в панели. В демо можно войти как второй сотрудник, чтобы подтвердить действие.
+async function loadMe() {
+  me = await api('/analyst/employees');
+  const other = Object.entries(me.employees).find(([k]) => k !== me.employee);
+  $('emp').innerHTML = `Сотрудник: <b>${esc(me.name)}</b>` + (other ? ` · <button class="linkbtn" id="empSwitch">Демо: войти как ${esc(other[1])}</button>` : '');
+  if (other) $('empSwitch').onclick = async () => {
+    me = await api('/analyst/employee', {employee: other[0]});
+    await loadMe();
+    if (current) open(current); else if (currentNet) openNetwork(currentNet); else loadQueue();
+  };
+}
+// Действие ждёт второго сотрудника: тот, кто просил, может только отменить свою просьбу.
+function approvalBox(a) {
+  const mine = a.requested_by === me.name;
+  return `<div class="twokey"><b>Ждёт второго сотрудника:</b> ${esc(a.summary)}.<br>
+    <span>Запросил(а) ${esc(a.requested_by)}, ${when(a.requested_at)}. ${mine ? 'Подтвердить должен другой сотрудник: правило двух ключей.' : ''}</span></div>
+    <div class="actions">${mine ? '' : `<button class="act approve" data-ok="${a.id}">Подтвердить</button>`}
+      <button class="act reject" data-no="${a.id}">${mine ? 'Отменить запрос' : 'Отклонить'}</button></div>`;
+}
+function bindApproval(after) {
+  $('detail').querySelectorAll('[data-ok]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await api(`/analyst/approvals/${b.dataset.ok}/confirm`, {}); await after(); }
+    catch (e) { b.disabled = false; alertBox(e.message); }
+  });
+  $('detail').querySelectorAll('[data-no]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await api(`/analyst/approvals/${b.dataset.no}/reject`, {}); await after(); }
+    catch (e) { b.disabled = false; alertBox(e.message); }
+  });
+}
 $('login').onsubmit = async e => {
   e.preventDefault();
-  const r = await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role:'analyst', pin:$('pin').value})});
+  const r = await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role:'analyst', pin:$('pin').value, employee:$('empSel').value})});
   if (r.ok && new URLSearchParams(location.search).get('next') === 'stats') { location.href = '/analyst/stats'; return; }
   if (r.ok) { $('pin').value = ''; $('loginErr').innerHTML = ''; showPanel(); }
   else $('loginErr').innerHTML = `<div class="note">${esc((await r.json().catch(() => ({}))).detail || 'Не удалось войти')}</div>`;
@@ -586,5 +653,6 @@ $('reset').onclick = async () => {
 };
 fetch('/me').then(r => r.ok ? r.json() : null).then(s => s && s.analyst ? showPanel() : showLogin());
 </script>
+<script src="/tour.js"></script>
 </body>
 </html>
