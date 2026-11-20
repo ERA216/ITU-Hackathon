@@ -109,8 +109,8 @@ EVENT_TEXT = {
     "cash_face_asked": "Снятие денег незнакомца: банкомат просит проверку по лицу",
     "cash_delayed": "Крупное снятие наличных во время подозрительного звонка отложено на час",
     "cash_cancelled": "Снятие наличных отменено",
-    "cash_stopped": "Снятие наличных не выполнено: по счёту ограничения",
     "cash_expired": "Снятие наличных не завершено: банкомат не дождался клиента",
+    "cash_stopped": "Снятие наличных отменено: по счёту ограничения",
 }
 INTERBANK_STATUS = {"sent": "Запрос отправлен, ждём ответ", "frozen": "Деньги заморожены в другом банке",
                     "gone": "Деньги уже сняты или ушли дальше", "answered": "Ответили автоматически"}
@@ -405,9 +405,7 @@ def _refresh_status(cid: int) -> str:
     status = "blocked" if "full" in scopes else "limited" if scopes else "active"
     conn.execute("UPDATE clients SET status=? WHERE id=?", (status, cid))
     if status != "active":
-        for w in conn.execute("SELECT * FROM cash_withdrawals WHERE client_id=? AND status IN ('pending','ready')",
-                              (cid,)).fetchall():
-            _cash_cancel(w, "system", "cash_stopped")
+        _stop_cash(cid)
         conn.execute("UPDATE clearances SET revoked_at=? WHERE client_id=? AND revoked_at IS NULL",
                      (_now().isoformat(), cid))
     return status
@@ -690,6 +688,7 @@ def _return_incoming(client: dict, inc) -> dict:
         conn.execute("UPDATE transfers SET status='cancelled' WHERE id=?", (case["transfer_id"],))
         conn.execute("UPDATE cases SET status='returned' WHERE id=?", (case["id"],))
     amount = inc["amount"] - _returned_sum(inc["id"])      # часть могли уже вернуть пострадавшему по жалобе
+    _release_cash(cid, amount)
     available = _spendable_for_return(cid)
     if available < amount:
         raise HTTPException(400, t("return_no_funds", available=_money(available), amount=_money(amount)))
@@ -843,7 +842,10 @@ def _trace_complaint(tr, complaint_id: int, now: datetime, complainant: int, act
                          f"{_money(inc['amount'])}, ответ до {due.strftime('%d.%m %H:%M')}")
                 continue
             fwd = engine.find_forward(conn, holder, inc)
-            if not fwd and hop == 1:
+            sent = sum(r["amount"] for r in fwd)
+            # Деньги, снятые наличными, тоже ушли со счёта: снять их — то же, что переслать дальше.
+            cashed = _cashed_out(holder, inc, sent)
+            if not fwd and not cashed and hop == 1:
                 continue
             reason = "complaint" if hop == 1 else "complaint_chain"
             reasons = [{"code": reason, "points": 30, "text": i18n.MSG["reason." + reason][0]}]
@@ -853,14 +855,17 @@ def _trace_complaint(tr, complaint_id: int, now: datetime, complainant: int, act
                                       datetime.fromisoformat(first["created_at"]))
                 reasons += res["reasons"]
                 score, out_id = min(100, res["score"] + 30), first["id"]
-                sent = sum(r["amount"] for r in fwd)
                 text = f"деньги переслали дальше ({_money(sent)})"
                 nxt.extend(fwd)
             else:
-                score, out_id, sent = 30, None, 0
+                score, out_id = 30, None
                 text = f"на счёте остались деньги из цепочки ({_money(inc['amount'])})"
+            if cashed:
+                reasons.append({"code": "cash_out", "points": 30, "text": i18n.MSG["reason.cash_out"][0], "amount": cashed})
+                score = min(100, score + 30)
+                text = (text + "; " if fwd else "") + f"деньги сняты наличными ({_money(cashed)})"
             # Сколько денег из цепочки осталось на этом счёте: их банк замораживает в любом случае.
-            frozen = max(0, inc["amount"] - sent)
+            frozen = max(0, inc["amount"] - sent - cashed)
             case_id = conn.execute(
                 """INSERT INTO cases(client_id,transfer_id,incoming_transfer_id,kind,score,reasons,created_at,
                                      complaint_id,hop,frozen) VALUES(?,?,?,?,?,?,?,?,?,?)""",
@@ -884,6 +889,16 @@ def _trace_complaint(tr, complaint_id: int, now: datetime, complainant: int, act
             created.append(case_id)
         frontier = nxt
     return created
+
+
+def _cashed_out(cid: int, inc, sent: int) -> int:
+    """Сколько денег этого входящего клиент снял наличными: деньги незнакомцев, выданные банкоматом после него
+    (в окне движка). Как и с переводами, считаем, что сначала тратятся свои деньги."""
+    until = (datetime.fromisoformat(inc["created_at"]) + timedelta(hours=engine.LOOKBACK_HOURS)).isoformat()
+    s = conn.execute("""SELECT COALESCE(SUM(foreign_amount),0) AS s FROM cash_withdrawals WHERE client_id=?
+                        AND status='done' AND created_at >= ? AND created_at <= ?""",
+                     (cid, inc["created_at"], until)).fetchone()["s"]
+    return max(0, min(s, inc["amount"] - sent))
 
 
 @app.post("/transfers/{tid}/complaint")
@@ -1118,6 +1133,9 @@ def _case_view(case) -> dict:
         summary = t("summary_rental")
     elif first == "network":
         summary = t("summary_network")
+    elif not out and inc and any(r.get("code") == "cash_out" for r in json.loads(case["reasons"])):
+        cash = next(r for r in json.loads(case["reasons"]) if r.get("code") == "cash_out").get("amount", 0)
+        summary = t("summary_cash", inc=_money(inc["amount"]), cash=_money(cash))
     elif out:
         gap = int((datetime.fromisoformat(out["created_at"]) - datetime.fromisoformat(inc["created_at"])).total_seconds() // 60)
         summary = t("summary", inc=_money(inc["amount"]), gap=_minutes_text(gap), out=_money(out["amount"]))
@@ -1548,13 +1566,14 @@ def guardian_cancel_pending(tid: int, s: dict = Depends(as_client)):
 
 # ---------- Снятие наличных по QR-коду банкомата ----------
 # Карта не нужна: банкомат показывает QR-код, клиент сканирует его в приложении (в демо — кнопка). Дропперы снимают
-# чужие деньги наличными, потому что наличные уже не вернуть. Поэтому деньги незнакомцев, пришедшие меньше суток
-# назад, по одному QR не выдаются: банкомат просит подтвердить снятие по лицу, и банк знает, кто их получил.
+# чужие деньги наличными, потому что наличные уже не вернуть. Поэтому деньги незнакомцев за последние 5 суток
+# (то же окно, что у предупреждения «Возможно, это чужие деньги» и у движка) по одному QR не выдаются: банкомат
+# просит подтвердить снятие по лицу, и банк знает, кто их получил.
 # Крупное снятие во время звонка с подозрительного номера откладывается на час: так работает схема «курьер»
 # («снимите деньги и передайте нашему сотруднику»). Доверенное лицо видит отложенное снятие и может его отменить.
 
 CASH_STEP = 1000                # банкомат выдаёт купюры: сумма кратна 1 000 ₸
-CASH_FOREIGN_HOURS = 24         # деньги незнакомцев за это время снимаются только с проверкой по лицу
+CASH_FOREIGN_HOURS = engine.LOOKBACK_HOURS   # деньги незнакомцев за это время — только с проверкой по лицу
 CASH_WAIT_MINUTES = 15          # сколько банкомат ждёт проверки по лицу
 CASH_READY_MINUTES = 30         # после задержки снять можно в течение этого времени
 
@@ -1574,22 +1593,30 @@ def _cash_active(cid: int):
 
 
 def _foreign_cash(cid: int, now: datetime) -> tuple[int, list]:
-    """Деньги незнакомцев за последние сутки, которые клиент ещё не вернул и не снял по лицу: сумма и входящие.
+    """Деньги незнакомцев за последние 5 суток, которые клиент ещё не вернул и не снял по лицу: сумма и входящие.
 
     Как и движок, считаем, что клиент сначала тратит свои деньги, а чужие остаются на счёте. Отметка «Я знаю
-    отправителя» снятие по лицу не отменяет: её может нажать и дроппер.
+    отправителя» снятие по лицу не отменяет: её может нажать и дроппер. Мелкие суммы складываются (касса
+    онлайн-казино и «подработка» собирают деньги многих людей по чуть-чуть); меньше WARN_MIN_AMOUNT всего —
+    проверки нет. Деньги, которые клиент уже переслал дальше, и замороженные банком на счёте уже не лежат
+    или и так недоступны: их не считаем.
     """
     if _client(cid)["kind"] == "ip":
         return 0, []                # выручка ИП от незнакомых покупателей — обычное дело
     since = (now - timedelta(hours=CASH_FOREIGN_HOURS)).isoformat()
-    incs = [i for i in engine._stranger_incomings(conn, cid, now)
-            if i["created_at"] >= since and i["amount"] >= WARN_MIN_AMOUNT]
-    if not incs:
+    left = {}
+    for i in engine._stranger_incomings(conn, cid, now):
+        if i["created_at"] >= since:
+            rest = i["amount"] - sum(f["amount"] for f in engine.find_forward(conn, cid, i))
+            if rest > 0:
+                left[i["id"]] = (i, rest)
+    if sum(rest for _, rest in left.values()) < WARN_MIN_AMOUNT:
         return 0, []
+    incs = [i for i, _ in left.values()]
     used = conn.execute("""SELECT COALESCE(SUM(foreign_amount),0) AS s FROM cash_withdrawals WHERE client_id=?
                            AND status IN ('done','pending','ready') AND created_at >= ?""",
                         (cid, min(i["created_at"] for i in incs))).fetchone()["s"]
-    return max(0, sum(i["amount"] for i in incs) - used), incs
+    return max(0, sum(rest for _, rest in left.values()) - used - _frozen_sum(cid)), incs
 
 
 def _cash_view(w) -> dict:
@@ -1636,6 +1663,20 @@ def _cash_cancel(w, actor: str, action: str = "cash_cancelled") -> dict:
     conn.execute("UPDATE cash_withdrawals SET status='cancelled' WHERE id=?", (w["id"],))
     log(actor, action, None, None, client=w["client_id"], amount=w["amount"])
     return {"status": "cancelled", "amount": w["amount"]}
+
+
+def _stop_cash(cid: int, actor: str = "system", action: str = "cash_stopped"):
+    """Снятия, которые ждут у банкомата или отложены, отменяются, резерв освобождается."""
+    for w in conn.execute("SELECT * FROM cash_withdrawals WHERE client_id=? AND status IN ('pending','ready')",
+                          (cid,)).fetchall():
+        _cash_cancel(w, actor, action)
+
+
+def _release_cash(cid: int, need: int):
+    """Безопасная операция (вернуть деньги отправителю, всем отправителям, кредит банку) важнее снятия, которое
+    ждёт у банкомата: если на неё не хватает денег из-за резерва под снятие, снятие отменяется."""
+    if _spendable_for_return(cid) < need and _cash_reserved(cid):
+        _stop_cash(cid, f"client:{cid}", "cash_cancelled")
 
 
 def _settle_cash():
@@ -2010,6 +2051,7 @@ def repay_loan(loan_id: int, s: dict = Depends(as_client)):
         conn.execute("UPDATE transfers SET status='cancelled' WHERE id=?", (case["transfer_id"],))
         conn.execute("UPDATE cases SET status='withdrawn' WHERE id=?", (case["id"],))
         log(f"client:{cid}", "withdrawn", case["id"], case["transfer_id"])
+    _release_cash(cid, loan["amount"])
     available = _spendable_for_return(cid)
     if available < loan["amount"]:
         raise HTTPException(400, t("loan_no_funds", available=_money(available), amount=_money(loan["amount"])))
@@ -2074,6 +2116,7 @@ def recruit_return_all(s: dict = Depends(as_client)):
     sig = _recruit_view(cid)
     if not sig:
         raise HTTPException(409, t("recruit_none"))
+    _release_cash(cid, sig["amount"])
     available = _spendable_for_return(cid)
     if available < sig["amount"]:
         raise HTTPException(400, t("return_no_funds", available=_money(available), amount=_money(sig["amount"])))
@@ -2138,6 +2181,7 @@ def self_report(body: SelfReportIn, s: dict = Depends(as_client)):
     case_id = None
     if body.kind != "offer":
         # Чужие деньги, которые ещё на счёте, и последняя пересылка: по ней сотрудник увидит карту сборщика.
+        _stop_cash(cid)                 # резерв под снятие наличных тоже замораживается
         foreign = engine._stranger_incomings(conn, cid, now)
         episode = (engine.forward_episodes(conn, cid, now) or [None])[-1]
         inc_id = episode["incoming_id"] if episode else max((i["id"] for i in foreign), default=None)
@@ -2916,6 +2960,7 @@ def claim_account(aid: int, body: ClaimIn, s: dict = Depends(as_client)):
         if not conn.execute("""SELECT 1 FROM clearances WHERE code=? UNION SELECT 1 FROM self_reports WHERE code=?
                                UNION SELECT 1 FROM account_claims WHERE code=?""", (code, code, code)).fetchone():
             break
+    _stop_cash(aid)
     frozen = max(0, _available(aid))
     reasons = [{"code": "identity_theft", "points": 0,
                 "text": "Владелец сообщил, что не открывал этот счёт: похоже на кражу личности "

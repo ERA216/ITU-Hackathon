@@ -186,7 +186,7 @@ function drawBars(host, data) {
     tile('Счетов ИП с признаками аренды', num(m.rental_accounts), `остановлено переводов: ${num(m.rental_stops)}, приостановлено счетов: ${num(m.rental_suspended)}`) +
     tile('Проверено сообщений', num(m.message_checks), `похожи на схемы мошенников: ${num(m.message_danger)}`) +
     tile('Не снято наличными во время звонка', compact(m.cash_delayed_saved), `крупных снятий во время подозрительного звонка: ${num(m.cash_delayed)}, не состоялись: ${num(m.cash_delayed_stopped)} — отменили клиент, доверенное лицо или банк`) +
-    tile('Чужие деньги — только по лицу', num(m.cash_face), `снятий денег незнакомцев за последние сутки; подтвердили по лицу: ${num(m.cash_face_done)}, не стали снимать: ${compact(m.cash_face_kept)}`) +
+    tile('Чужие деньги — только по лицу', num(m.cash_face), `снятий денег незнакомцев за последние 5 дней; подтвердили по лицу: ${num(m.cash_face_done)}, не стали снимать: ${num(m.cash_face_kept)}`) +
     tile('Проверено QR-кодов', num(m.qr_checks), `похожи на подмену: ${num(m.qr_danger)}`) +
     tile('Прошли тренажёр', num(m.trainer_clients), m.trainer_runs ? `прохождений: ${num(m.trainer_runs)}, средний результат: ${pct(m.trainer_avg)}${m.trainer_hardest ? `; чаще всего ошибаются: ${m.trainer_hardest}` : ''}` : 'учебные звонки и сообщения мошенников в приложении');
   $('load').innerHTML =

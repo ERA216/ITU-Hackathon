@@ -268,7 +268,8 @@ def _cash_and_qr(conn, since: str) -> dict:
     """Снятие наличных по QR и проверка QR перед оплатой.
 
     Отложенное снятие не состоялось, если его отменили (клиент, доверенное лицо, банк) или клиент не пришёл.
-    Деньги незнакомцев, которые не стали снимать после просьбы банкомата о проверке по лицу, остались на счёте.
+    «Не стали снимать» — сколько снятий денег незнакомцев отменили или не завершили после просьбы о проверке по лицу
+    (число, а не сумма: одни и те же деньги клиент мог пробовать снять несколько раз).
     """
     rows = conn.execute("SELECT * FROM cash_withdrawals WHERE created_at >= ?", (since,)).fetchall()
     gone = ("cancelled", "expired")
@@ -279,7 +280,7 @@ def _cash_and_qr(conn, since: str) -> dict:
     return {"cash_delayed": len(delayed), "cash_delayed_stopped": sum(w["status"] in gone for w in delayed),
             "cash_delayed_saved": sum(w["amount"] for w in delayed if w["status"] in gone),
             "cash_face": len(face), "cash_face_done": sum(w["status"] == "done" for w in face),
-            "cash_face_kept": sum(w["foreign_amount"] for w in face if w["status"] in gone),
+            "cash_face_kept": sum(w["status"] in gone for w in face),
             "qr_checks": sum(qr.values()), "qr_danger": qr.get("danger", 0)}
 
 

@@ -2207,7 +2207,7 @@ def test_stranger_money_can_be_returned_instead_of_withdrawn():
     inc = r["return_incoming"]["id"]
     assert st.post(f"/incoming/{inc}/return").json()["status"] == "returned"
     assert cash(st, 40000).json()["status"] == "done"               # чужих денег больше нет
-    assert analyst().get("/analyst/metrics").json()["cash_face_kept"] == 58000
+    assert analyst().get("/analyst/metrics").json()["cash_face_kept"] == 1
 
 
 def test_large_cash_during_a_suspicious_call_waits_an_hour_and_guardian_can_cancel_it():
@@ -2341,3 +2341,57 @@ def test_trainer_in_kazakh():
     assert qs[0]["kind"] == "Қоңырау" and "қауіпсіз шот" in qs[0]["text"].lower()
     right = {q: s["right"] for q, s in trainer.BY_ID.items()}
     assert st.post("/trainer/finish", json={"answers": right}).json()["title"] == "8 ішінен 8"
+
+
+# ---------- Исправления после проверки 20 ноября (наличные) ----------
+
+def test_complaint_sees_stranger_money_cashed_out():
+    st = client(STUDENT)
+    w = cash(st, 190000).json()
+    st.post(f"/cash/{w['id']}/take")                                 # из них 148 000 ₸ — деньги незнакомца
+    stranger = client(STRANGER)
+    tid = feed_item(st, STUDENT, STRANGER)["id"]
+    r = stranger.post(f"/transfers/{tid}/complaint").json()
+    assert r["outcome"] == "blocked" and "наличными" in r["text"]
+    assert account(st, STUDENT)["status"] != "active"
+    an = analyst()
+    case_id = next(c["case_id"] for c in an.get("/analyst/cases").json() if c["client_id"] == STUDENT)
+    card = an.get(f"/analyst/cases/{case_id}").json()
+    assert "cash_out" in [x["code"] for x in card["reasons"]] and card["frozen"] == 2000
+    assert "наличными" in st.get(f"/clients/{STUDENT}/case").json()["summary"]
+    assert account(stranger, STRANGER)["complaints"][0]["stage"] == "checking"
+
+
+def test_safe_operations_cancel_cash_waiting_at_the_atm():
+    bolat = client(1013)
+    bolat.post("/telecom/signal", json={"active": True})
+    assert cash(bolat, 500000).json()["status"] == "pending"
+    loan = account(bolat, 1013)["loan"]
+    assert bolat.post(f"/loans/{loan['id']}/repay").json()["status"] == "repaid"
+    assert account(bolat, 1013)["cash"] is None
+    st = client(STUDENT)
+    assert cash(st, 100000).json()["status"] == "ready"
+    assert st.post(f"/incoming/{feed_item(st, STUDENT, STRANGER)['id']}/return").json()["status"] == "returned"
+    assert account(st, STUDENT)["cash"] is None
+
+
+def test_cash_of_money_from_several_strangers_needs_a_face_check():
+    er = client(RECRUIT)                                             # 143 000 ₸ от трёх незнакомцев за два дня
+    w = cash(er, 100000).json()
+    assert w["status"] == "ready" and w["foreign_amount"] == 92000
+    assert er.post("/recruit/return-all").json()["amount"] == 143000   # возврат важнее снятия
+    assert account(er, RECRUIT)["cash"] is None
+
+
+def test_self_report_freezes_money_reserved_for_cash():
+    er = client(RECRUIT)
+    assert cash(er, 100000).json()["status"] == "ready"
+    er.post("/self-report", json={"kind": "transit", "details": WORDS})
+    acc = account(er, RECRUIT)
+    assert acc["frozen"] == 143000 and acc["cash"] is None
+
+
+def test_forwarded_stranger_money_does_not_ask_for_a_face_check():
+    assert cash(client(SELLER), 30000).json()["status"] == "done"    # деньги Гульнар он уже переслал дальше
+    w = cash(client(SAMAT), 100000).json()                           # касса казино: мелкие суммы складываются
+    assert w["status"] == "ready" and w["foreign_amount"] == 100000
