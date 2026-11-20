@@ -5,7 +5,7 @@ import json
 import statistics
 from datetime import datetime, timedelta
 
-from . import engine
+from . import engine, trainer
 
 KEPT = ("returned", "cancelled", "withdrawn", "guardian_cancelled")   # остановленный перевод так и не ушёл
 NET_DAYS = 90       # переводы между подозрительными счетами за этот срок связывают их в одну сеть
@@ -85,6 +85,8 @@ def compute(conn, now: datetime, days: int = 30) -> dict:
         **_rental(conn, since, now),
         **_interbank(conn, since),
         **_safes(conn, since),
+        **_cash_and_qr(conn, since),
+        **_trainer(conn, since),
         **_networks_summary(conn, now),
         "rule_feedback": _rule_feedback(conn, since),
         "clearances": conn.execute("SELECT COUNT(*) AS n FROM clearances WHERE issued_at >= ?", (since,)).fetchone()["n"],
@@ -260,6 +262,38 @@ def _safes(conn, since: str) -> dict:
     return {"safe_clients": total["n"], "safe_amount": total["a"], "safe_refused": len(refused),
             "safe_refused_amount": sum(refused), "safe_unlock_requests": len(ev("safe_unlock_requested")),
             "safe_unlock_cancelled": len(ev("safe_unlock_cancelled"))}
+
+
+def _cash_and_qr(conn, since: str) -> dict:
+    """Снятие наличных по QR и проверка QR перед оплатой.
+
+    Отложенное снятие не состоялось, если его отменили (клиент, доверенное лицо, банк) или клиент не пришёл.
+    Деньги незнакомцев, которые не стали снимать после просьбы банкомата о проверке по лицу, остались на счёте.
+    """
+    rows = conn.execute("SELECT * FROM cash_withdrawals WHERE created_at >= ?", (since,)).fetchall()
+    gone = ("cancelled", "expired")
+    delayed = [w for w in rows if w["release_at"]]
+    face = [w for w in rows if w["foreign_amount"] and not w["release_at"]]
+    qr = {r["verdict"]: r["n"] for r in conn.execute(
+        "SELECT verdict, COUNT(*) AS n FROM qr_checks WHERE at >= ? GROUP BY verdict", (since,))}
+    return {"cash_delayed": len(delayed), "cash_delayed_stopped": sum(w["status"] in gone for w in delayed),
+            "cash_delayed_saved": sum(w["amount"] for w in delayed if w["status"] in gone),
+            "cash_face": len(face), "cash_face_done": sum(w["status"] == "done" for w in face),
+            "cash_face_kept": sum(w["foreign_amount"] for w in face if w["status"] in gone),
+            "qr_checks": sum(qr.values()), "qr_danger": qr.get("danger", 0)}
+
+
+def _trainer(conn, since: str) -> dict:
+    """Тренажёр против мошенников: сколько прохождений, средний результат и ситуация, где ошибаются чаще всего."""
+    rows = conn.execute("SELECT * FROM trainer_results WHERE at >= ?", (since,)).fetchall()
+    misses: dict[str, int] = {}
+    for r in rows:
+        for q in json.loads(r["wrong"] or "[]"):
+            misses[q] = misses.get(q, 0) + 1
+    hardest = max(misses, key=lambda q: (misses[q], q), default=None)
+    return {"trainer_runs": len(rows), "trainer_clients": len({r["client_id"] for r in rows}),
+            "trainer_avg": round(100 * sum(r["score"] for r in rows) / sum(r["total"] for r in rows), 1) if rows else None,
+            "trainer_hardest": trainer.BY_ID[hardest]["short"] if hardest in trainer.BY_ID else None}
 
 
 def _interbank(conn, since: str) -> dict:

@@ -16,7 +16,7 @@ os.environ["CA_DOC_KEY_FILE"] = os.path.join(_tmp, "doc.key")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import db, engine, main, seed  # noqa: E402
+from app import db, engine, main, seed, trainer  # noqa: E402
 
 TEMPLATE = os.path.join(_tmp, "template.db")
 _conn, STATS = seed.build(TEMPLATE, verbose=False)
@@ -2162,3 +2162,182 @@ def test_identity_claim_on_a_suspended_account_extends_the_same_case():
 
 def test_no_personal_data_for_another_bank_client():
     assert analyst().post(f"/analyst/clients/{BANK_CARD}/pii", json={"reason": "contact"}).status_code == 404
+
+
+# ---------- Снятие наличных по QR-коду банкомата ----------
+
+def cash(c, amount):
+    return c.post("/cash/withdraw", json={"amount": amount})
+
+
+def test_cash_of_own_money_is_given_at_once():
+    st = client(STUDENT)
+    assert cash(st, 15500).status_code == 400                       # банкомат выдаёт купюры
+    r = cash(st, 40000).json()                                     # свои 42 000 ₸, чужих 150 000 ₸
+    assert r["status"] == "done" and r["foreign_amount"] == 0
+    acc = account(st, STUDENT)
+    assert acc["balance"] == 152000 and acc["cash"] is None
+    row = acc["feed"][0]
+    assert row["cash"] and row["direction"] == "out" and row["amount"] == 40000 and not row["face"]
+
+
+def test_cash_of_a_stranger_money_needs_a_face_check():
+    st = client(STUDENT)
+    r = cash(st, 50000).json()
+    assert r["status"] == "ready" and r["foreign_amount"] == 8000 and r["expires_at"]
+    assert r["return_incoming"]["amount"] == 150000
+    acc = account(st, STUDENT)
+    assert acc["available"] == 142000 and acc["held"] == 0 and acc["cash"]["id"] == r["id"]   # сумма зарезервирована
+    assert cash(st, 1000).status_code == 409                        # одно снятие за раз
+    assert send(st, MOM, 150000).status_code == 400                 # резерв нельзя потратить переводом
+    done = st.post(f"/cash/{r['id']}/take").json()
+    assert done == {"status": "done", "amount": 50000, "face": True}
+    assert account(st, STUDENT)["feed"][0]["face"]
+    # Дальше свои деньги кончились: любое снятие — с проверкой по лицу.
+    assert cash(st, 1000).json()["foreign_amount"] == 1000
+    m = analyst().get("/analyst/metrics").json()
+    assert (m["cash_face"], m["cash_face_done"]) == (2, 1)
+
+
+def test_stranger_money_can_be_returned_instead_of_withdrawn():
+    st = client(STUDENT)
+    r = cash(st, 100000).json()
+    assert st.post(f"/cash/{r['id']}/cancel").json() == {"status": "cancelled", "amount": 100000}
+    assert st.post(f"/cash/{r['id']}/take").status_code == 409
+    inc = r["return_incoming"]["id"]
+    assert st.post(f"/incoming/{inc}/return").json()["status"] == "returned"
+    assert cash(st, 40000).json()["status"] == "done"               # чужих денег больше нет
+    assert analyst().get("/analyst/metrics").json()["cash_face_kept"] == 58000
+
+
+def test_large_cash_during_a_suspicious_call_waits_an_hour_and_guardian_can_cancel_it():
+    mom, daughter = client(MOM), client(STUDENT)
+    mom.post("/telecom/signal", json={"active": True})
+    assert cash(mom, 50000).json()["status"] == "done"              # небольшая сумма — сразу
+    r = cash(mom, 100000).json()
+    assert r["status"] == "pending" and r["release_at"]
+    assert mom.post(f"/cash/{r['id']}/take").status_code == 409
+    g = account(daughter, STUDENT)["guardian_cash"]
+    assert [(x["id"], x["amount"], x["status"]) for x in g] == [(r["id"], 100000, "pending")]
+    assert client(VICTIM).post(f"/guardian/cash/{r['id']}/cancel").status_code == 404
+    assert daughter.post(f"/guardian/cash/{r['id']}/cancel").json()["status"] == "cancelled"
+    assert account(mom, MOM)["cash"] is None and account(daughter, STUDENT)["guardian_cash"] == []
+    m = analyst().get("/analyst/metrics").json()
+    assert (m["cash_delayed"], m["cash_delayed_stopped"], m["cash_delayed_saved"]) == (1, 1, 100000)
+
+
+def test_delayed_cash_becomes_available_after_the_hour_and_then_expires():
+    mom = client(MOM)
+    mom.post("/telecom/signal", json={"active": True})
+    r = cash(mom, 120000).json()
+    past = (main._now() - timedelta(minutes=1)).isoformat()
+    main.conn.execute("UPDATE cash_withdrawals SET release_at=? WHERE id=?", (past, r["id"]))
+    main.conn.commit()
+    w = account(mom, MOM)["cash"]
+    assert w["status"] == "ready" and w["expires_at"] > main._now().isoformat()
+    before = account(mom, MOM)["balance"]
+    assert mom.post(f"/cash/{r['id']}/take").json()["face"] is False
+    assert account(mom, MOM)["balance"] == before - 120000
+    # Если клиент не пришёл к банкомату, снятие истекает и резерв освобождается.
+    st = client(STUDENT)
+    r = cash(st, 100000).json()
+    assert r["status"] == "ready" and account(st, STUDENT)["available"] == 92000
+    main.conn.execute("UPDATE cash_withdrawals SET expires_at=? WHERE id=?", (past, r["id"]))
+    main.conn.commit()
+    acc = account(st, STUDENT)
+    assert acc["cash"] is None and acc["available"] == 192000
+    assert main.conn.execute("SELECT status FROM cash_withdrawals WHERE id=?", (r["id"],)).fetchone()[0] == "expired"
+
+
+def test_cash_waiting_at_the_atm_is_cancelled_when_the_account_is_restricted():
+    tim = client(CARD_GIVER)
+    main.conn.execute("""INSERT INTO cash_withdrawals(client_id,amount,status,created_at,expires_at)
+                         VALUES(?,?,'ready',?,?)""", (CARD_GIVER, 10000, main._now().isoformat(),
+                                                    (main._now() + timedelta(minutes=10)).isoformat()))
+    main.conn.commit()
+    assert account(tim, CARD_GIVER)["cash"]["status"] == "ready"
+    tim.post("/self-report", json={"kind": "card", "details": WORDS})
+    acc = account(tim, CARD_GIVER)
+    assert acc["status"] == "blocked" and acc["cash"] is None
+    assert cash(tim, 1000).status_code == 403
+
+
+def test_cash_cannot_be_taken_from_the_safe():
+    mom = client(MOM)
+    r = cash(mom, 1000000)
+    assert r.status_code == 400 and "сейфе" in r.json()["detail"]
+    assert analyst().get("/analyst/metrics").json()["safe_refused"] == 1
+
+
+def test_analyst_sees_cash_withdrawals_in_the_case():
+    st = client(STUDENT)
+    r = cash(st, 60000).json()
+    st.post(f"/cash/{r['id']}/take")
+    assert send(st, DROP_CARD, 100000).json()["status"] == "held"
+    an = analyst()
+    case_id = next(c["case_id"] for c in an.get("/analyst/cases").json() if c["client_id"] == STUDENT)
+    rows = an.get(f"/analyst/cases/{case_id}").json()["cash"]
+    assert [(w["amount"], w["foreign_amount"], w["face"]) for w in rows] == [(60000, 18000, True)]
+
+
+# ---------- Проверка QR-кода перед оплатой ----------
+
+def qr(c, acc, name, amount=500):
+    return c.post("/qr/check", json={"payload": f"bccpay://pay?acc={acc}&name={name}&amount={amount}"})
+
+
+def test_qr_leading_to_a_private_card_is_flagged_as_replaced():
+    mom = client(MOM)
+    r = qr(mom, DROP_CARD, "Городская парковка").json()
+    assert r["verdict"] == "danger" and r["receiver_id"] is None and "частного лица" in r["text"]
+    assert "Карта" not in r["receiver"]                           # имя частного лица не показываем
+    ok = qr(mom, HONEST_SHOP, "Магазин одежды", 18500).json()
+    assert ok["verdict"] == "ok" and ok["receiver_id"] == HONEST_SHOP and ok["amount"] == 18500
+    assert "ИП Асель" in ok["receiver"] and "Магазин одежды" in ok["receiver"]
+    assert send(mom, ok["receiver_id"], ok["amount"]).json()["status"] == "done"     # оплата — обычный перевод
+    assert qr(mom, BANK_CARD, "Кофейня").json()["verdict"] == "caution"
+    assert qr(mom, RENTED_IP, "Одежда").json()["verdict"] == "danger"                # ИП с признаками аренды
+    assert mom.post("/qr/check", json={"payload": "https://pay.example/x"}).status_code == 400
+    assert qr(mom, 99999, "Нет").status_code == 404
+    assert qr(mom, MOM, "Себе").status_code == 400
+    m = analyst().get("/analyst/metrics").json()
+    assert (m["qr_checks"], m["qr_danger"]) == (4, 2)
+
+
+def test_qr_texts_in_kazakh():
+    mom = client(MOM)
+    mom.cookies.set("ca_lang", "kk")
+    r = qr(mom, DROP_CARD, "Қалалық тұрақ").json()
+    assert "жеке тұлға" in r["text"] and "Қалалық тұрақ" in r["text"]
+
+
+# ---------- Тренажёр против мошенников ----------
+
+def test_trainer_shows_situations_explains_answers_and_keeps_only_the_result():
+    st = client(STUDENT)
+    data = st.get("/trainer").json()
+    qs = data["questions"]
+    assert len(qs) == 8 and data["last"] is None
+    assert all("right" not in q and "explain" not in q for q in qs)   # ответы не уходят на экран заранее
+    a = st.post("/trainer/answer", json={"qid": "security", "choice": "a"}).json()
+    assert a["correct"] is False and a["right"] == "c" and "Безопасных счетов" in a["explain"]
+    assert st.post("/trainer/answer", json={"qid": "nope", "choice": "a"}).status_code == 400
+    assert st.post("/trainer/finish", json={"answers": {"security": "c"}}).status_code == 400   # не на все ответил
+    right = {q: s["right"] for q, s in trainer.BY_ID.items()}
+    r = st.post("/trainer/finish", json={"answers": right}).json()
+    assert (r["score"], r["total"], r["wrong"]) == (8, 8, []) and r["title"] == "8 из 8"
+    r = st.post("/trainer/finish", json={"answers": right | {"courier": "a", "qr": "a", "job": "a"}}).json()
+    assert r["score"] == 5 and sorted(r["wrong"]) == ["courier", "job", "qr"] and "могли бы" in r["text"]
+    assert st.get("/trainer").json()["last"]["score"] == 5
+    m = analyst().get("/analyst/metrics").json()
+    assert (m["trainer_runs"], m["trainer_clients"], m["trainer_avg"]) == (2, 1, 81.2)
+    assert m["trainer_hardest"]
+
+
+def test_trainer_in_kazakh():
+    st = client(STUDENT)
+    st.cookies.set("ca_lang", "kk")
+    qs = st.get("/trainer").json()["questions"]
+    assert qs[0]["kind"] == "Қоңырау" and "қауіпсіз шот" in qs[0]["text"].lower()
+    right = {q: s["right"] for q, s in trainer.BY_ID.items()}
+    assert st.post("/trainer/finish", json={"answers": right}).json()["title"] == "8 ішінен 8"

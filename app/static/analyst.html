@@ -484,6 +484,11 @@ async function open(id) {
       ${c.self_report.details ? `<blockquote>${esc(c.self_report.details)}</blockquote>` : ''}
       <p class="muted">Обращение ${when(c.self_report.at)}, до жалоб и ограничений по счёту. Подтверждение № ${esc(c.self_report.number)}, проверка:
         <a href="/verify/${esc(c.self_report.code)}" target="_blank" rel="noopener">/verify/${esc(c.self_report.code)}</a></p></div>` : ''}
+    ${c.cash && c.cash.length ? `<div class="card"><h2>Снятие наличных</h2>
+      <ul>${c.cash.map(w => `<li><span>${when(w.at)} — ${money(w.amount)}${w.foreign_amount ? `, из них ${money(w.foreign_amount)} — деньги незнакомцев за последние сутки` : ''}:
+        ${w.status === 'done' ? (w.face ? 'снято, подтверждено по лицу в банкомате' : 'снято') :
+          {cancelled: 'отменено', expired: 'клиент не пришёл к банкомату', pending: 'отложено на час', ready: 'ждёт у банкомата'}[w.status] || esc(w.status)}${w.delayed ? ' (во время звонка с подозрительного номера)' : ''}</span></li>`).join('')}</ul>
+      <p class="muted" style="margin:6px 0 0">Наличные уже не вернуть. Деньги незнакомцев за последние сутки банкомат выдаёт только после проверки по лицу: банк знает, кто их получил.</p></div>` : ''}
     ${c.kind === 'block' ? `<div class="card"><h2>Ограничение по счёту</h2>
       ${c.scope === 'partial'
         ? `<p><b>Соразмерная блокировка: заморожено ${money(c.frozen)}.</b> Остальными деньгами клиент пользуется, но переводить может только тем, кому переводил раньше.</p>

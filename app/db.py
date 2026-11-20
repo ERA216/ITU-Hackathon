@@ -192,6 +192,34 @@ CREATE TABLE IF NOT EXISTS account_claims (
     case_id INTEGER REFERENCES cases(id),
     at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS cash_withdrawals (
+    id INTEGER PRIMARY KEY,             -- снятие наличных по QR-коду банкомата, без карты
+    client_id INTEGER NOT NULL REFERENCES clients(id),
+    amount INTEGER NOT NULL,
+    foreign_amount INTEGER NOT NULL DEFAULT 0,  -- сколько в сумме денег незнакомцев, пришедших меньше суток назад
+    status TEXT NOT NULL,               -- done | ready: ждёт у банкомата | pending: отложено на час | cancelled | expired
+    created_at TEXT NOT NULL,
+    release_at TEXT,                    -- pending: с какого момента можно снять (звонок с подозрительного номера)
+    expires_at TEXT,                    -- ready: до какого момента банкомат ждёт клиента
+    done_at TEXT,
+    face INTEGER NOT NULL DEFAULT 0     -- снятие подтвердили по лицу в банкомате
+);
+CREATE INDEX IF NOT EXISTS ix_cash_client ON cash_withdrawals(client_id);
+CREATE TABLE IF NOT EXISTS qr_checks (
+    id INTEGER PRIMARY KEY,             -- проверка платёжного QR-кода перед оплатой
+    client_id INTEGER NOT NULL REFERENCES clients(id),
+    receiver_id INTEGER NOT NULL REFERENCES clients(id),
+    verdict TEXT NOT NULL,              -- ok | caution | danger
+    at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS trainer_results (
+    id INTEGER PRIMARY KEY,             -- тренажёр против мошенников: результат одного прохождения
+    client_id INTEGER NOT NULL REFERENCES clients(id),
+    score INTEGER NOT NULL,
+    total INTEGER NOT NULL,
+    wrong TEXT,                         -- JSON: номера ситуаций, где клиент ошибся
+    at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -209,7 +237,7 @@ CREATE TABLE IF NOT EXISTS documents (
 """
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 
 def connect(path: str | None = None) -> sqlite3.Connection:

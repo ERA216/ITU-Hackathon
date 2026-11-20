@@ -381,7 +381,7 @@ def populate(conn, seed: int = 7, now: datetime | None = None, evaluate: bool = 
     демо-серверу они не нужны, без них он запускается быстрее.
     """
     if reset:
-        for table in ("approvals", "data_access", "account_claims", "devices", "safes", "interbank", "loans", "self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
+        for table in ("cash_withdrawals", "qr_checks", "trainer_results", "approvals", "data_access", "account_claims", "devices", "safes", "interbank", "loans", "self_reports", "message_checks", "clearances", "guardians", "recruit_marks", "afc_list", "call_signals", "events", "complaints", "incoming_marks", "documents", "cases", "transfers", "clients", "meta"):
             conn.execute(f"DELETE FROM {table}")
     now = (now or clock.now()).replace(microsecond=0)
     rng = random.Random(seed)

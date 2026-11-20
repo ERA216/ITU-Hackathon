@@ -266,6 +266,7 @@
 
         <div id="callAlert"></div>
         <div id="coolAlerts"></div>
+        <div id="cashAlerts"></div>
         <div id="loanCard"></div>
         <div id="rentalCard"></div>
         <div id="casinoCard"></div>
@@ -294,6 +295,25 @@
           <button class="primary" id="send" data-t="send"></button>
         </div>
         <div class="card muted" id="payBlocked" data-t="payBlocked" hidden></div>
+        <div class="card" id="qrCard">
+          <h2 data-t="qrH"></h2>
+          <p class="muted" data-t="qrAbout" style="margin-top:0"></p>
+          <div class="muted" data-t="qrDemo"></div>
+          <div class="examples" style="margin-top:8px">
+            <button class="soft" data-qr="parking" data-t="qrParking"></button>
+            <button class="soft" data-qr="shop" data-t="qrShop"></button>
+            <button class="soft" data-qr="cafe" data-t="qrCafe"></button>
+          </div>
+          <div id="qrResult"></div>
+        </div>
+        <div class="card" id="cashCard">
+          <h2 data-t="cashH"></h2>
+          <p class="muted" data-t="cashAbout" style="margin-top:0"></p>
+          <label for="cashAmount" data-t="amount"></label>
+          <input id="cashAmount" type="number" min="1000" step="1000" inputmode="numeric" placeholder="0">
+          <button class="primary" id="cashScan" data-t="cashScan"></button>
+          <div id="cashState" style="margin-top:12px"></div>
+        </div>
       </section>
 
       <section data-pane="safe" hidden>
@@ -306,6 +326,7 @@
           <button class="primary" id="msgCheck" data-t="msgCheck"></button>
           <div id="msgResult"></div>
         </div>
+        <div class="card" id="trainerCard"></div>
         <div class="card guardian" id="guardianCard"></div>
         <div class="card" id="selfCard" hidden></div>
         <div class="card" id="accessCard"></div>
@@ -359,14 +380,14 @@ const T = {
   demoIntro: ['Прототип для хакатона. Выберите персонажа и следуйте подсказке: экран клиента работает как приложение банка.',
               'Хакатонға арналған прототип. Кейіпкерді таңдап, кеңесті орындаңыз: клиент экраны банк қосымшасы сияқты жұмыс істейді.'],
   statsLink: ['Эффективность системы', 'Жүйенің тиімділігі'],
-  hint_1001: ['20 минут назад пришло 150 000 ₸ от незнакомца. Попробуйте переслать их на «Карту для возврата» во вкладке «Переводы» или вернуть отправителю с главной.',
-              '20 минут бұрын бейтаныс адамнан 150 000 ₸ келді. Оны «Аударымдар» бөлімінде «қайтаруға арналған картаға» жіберіп көріңіз немесе басты беттен жіберушіге қайтарыңыз.'],
+  hint_1001: ['20 минут назад пришло 150 000 ₸ от незнакомца. Попробуйте переслать их на «Карту для возврата» во вкладке «Переводы» или вернуть отправителю с главной. Или снимите их наличными («Переводы» → «Снять наличные без карты»): банкомат попросит проверку по лицу.',
+              '20 минут бұрын бейтаныс адамнан 150 000 ₸ келді. Оны «Аударымдар» бөлімінде «қайтаруға арналған картаға» жіберіп көріңіз немесе басты беттен жіберушіге қайтарыңыз. Немесе оны қолма-қол алып көріңіз («Аударымдар» → «Картасыз қолма-қол ақша алу»): банкомат бет-әлпет бойынша тексеруді сұрайды.'],
   hint_1002: ['Отправил Айдане 150 000 ₸. В операциях можно нажать «Это были мошенники?» у этого перевода.',
               'Айданаға 150 000 ₸ жіберді. Операцияларда осы аударымның астындағы «Бұл алаяқтар ма еді?» түймесін басуға болады.'],
   hint_1003: ['Карта дроппера, счёту 6 дней. После жалобы Гульнар счёт приостанавливается целиком.',
               'Дроппердің картасы, шотқа 6 күн. Гүлнардың шағымынан кейін шот толық тоқтатылады.'],
-  hint_1004: ['Айдана — её доверенное лицо. Включите сигнал звонка ниже и переведите деньги на «Безопасный счёт». Или переведите новому получателю 120 000 ₸: перевод уйдёт через час. Сбережения 1 500 000 ₸ лежат в «Сейфе» (вкладка «Защита»): попробуйте перевести 1 000 000 ₸.',
-              'Айдана — оның сенімді адамы. Төмендегі қоңырау сигналын қосып, «Қауіпсіз шотқа» ақша аударыңыз. Немесе жаңа алушыға 120 000 ₸ аударыңыз: аударым бір сағаттан кейін кетеді. 1 500 000 ₸ жинақ «Сейфте» жатыр («Қорғау» бөлімі): 1 000 000 ₸ аударып көріңіз.'],
+  hint_1004: ['Айдана — её доверенное лицо. Включите сигнал звонка ниже и переведите деньги на «Безопасный счёт». Или переведите новому получателю 120 000 ₸: перевод уйдёт через час. Сбережения 1 500 000 ₸ лежат в «Сейфе» (вкладка «Защита»): попробуйте перевести 1 000 000 ₸. Со звонком снимите 120 000 ₸ наличными: снятие отложится на час, а Айдана сможет его отменить.',
+              'Айдана — оның сенімді адамы. Төмендегі қоңырау сигналын қосып, «Қауіпсіз шотқа» ақша аударыңыз. Немесе жаңа алушыға 120 000 ₸ аударыңыз: аударым бір сағаттан кейін кетеді. 1 500 000 ₸ жинақ «Сейфте» жатыр («Қорғау» бөлімі): 1 000 000 ₸ аударып көріңіз. Қоңырау кезінде 120 000 ₸ қолма-қол алыңыз: ақша алу бір сағатқа кейінге қалады, ал Айдана оны болдырмай алады.'],
   hint_1005: ['Переслал 195 000 ₸ «по ошибке» на чужую карту. Сначала войдите как Гульнар и пожалуйтесь, потом вернитесь сюда: заморожена только спорная сумма.',
               '195 000 ₸ «қателесіп» бөтен картаға жіберді. Алдымен Гүлнар ретінде кіріп шағым беріңіз, сосын осында оралыңыз: тек даулы сома бұғатталған.'],
   hint_1006: ['Купила телефон у Данияра и попала на мошенников. В операциях нажмите «Это были мошенники?» у перевода 200 000 ₸.',
@@ -685,6 +706,60 @@ const T = {
   srDoneH: ['Вы сообщили банку {d}', 'Сіз банкке {d} хабарладыңыз'],
   srDoneText: ['Подтверждение № {n}. Его можно распечатать и приложить к заявлению в полицию.', '№ {n} растау. Оны басып шығарып, полицияға арызға қоса беруге болады.'],
   srDocOpen: ['Открыть подтверждение', 'Растауды ашу'],
+  qrH: ['Оплата по QR-коду', 'QR-код арқылы төлеу'],
+  qrAbout: ['Перед оплатой покажем, кто на самом деле получит деньги. Мошенники клеят свой QR-код поверх настоящего на парковках и в кафе.',
+            'Төлемес бұрын ақшаны шын мәнінде кім алатынын көрсетеміз. Алаяқтар тұрақтар мен кафелерде өз QR-кодын нағыз кодтың үстіне жапсырады.'],
+  qrDemo: ['Демо: отсканируйте наклейку', 'Демо: жапсырманы сканерлеңіз'],
+  qrParking: ['Парковка', 'Тұрақ'],
+  qrShop: ['Магазин одежды', 'Киім дүкені'],
+  qrCafe: ['Кофейня', 'Кофехана'],
+  qrName_parking: ['Городская парковка', 'Қалалық тұрақ'],
+  qrName_shop: ['Магазин одежды Асель', 'Әсел киім дүкені'],
+  qrName_cafe: ['Кофейня Бариста', 'Бариста кофеханасы'],
+  qrWho: ['Получатель:', 'Алушы:'],
+  qrSum: ['Сумма в QR-коде: {m}', 'QR-кодтағы сома: {m}'],
+  qrPay: ['Оплатить {m}', '{m} төлеу'],
+  cashH: ['Снять наличные без карты', 'Картасыз қолма-қол ақша алу'],
+  cashAbout: ['Банкомат покажет QR-код — отсканируйте его в приложении. Деньги, которые незнакомый человек прислал меньше суток назад, банкомат выдаёт только после проверки по лицу.',
+              'Банкомат QR-кодты көрсетеді — оны қосымшада сканерлеңіз. Бейтаныс адам бір тәуліктен аз уақыт бұрын жіберген ақшаны банкомат тек бет-әлпет бойынша тексергеннен кейін береді.'],
+  cashScan: ['Демо: отсканировать QR-код банкомата', 'Демо: банкоматтың QR-кодын сканерлеу'],
+  cashDone: ['Заберите наличные: {m}', 'Қолма-қол ақшаны алыңыз: {m}'],
+  cashFeed: ['Снятие наличных в банкомате', 'Банкоматтан қолма-қол ақша алу'],
+  tagFace: ['подтверждено по лицу', 'бет-әлпет бойынша расталды'],
+  cashDelayH: ['Снятие {m} отложено до {t}', '{m} алу {t} дейін кейінге қалдырылды'],
+  cashDelayText: ['Вам звонят с подозрительного номера, а вы снимаете крупную сумму. Так работает схема «курьер»: звонят от имени полиции или банка, просят снять деньги и передать «сотруднику». Полиция и банк никогда не забирают наличные. Положите трубку и отмените снятие.',
+                  'Сізге күдікті нөмірден қоңырау шалып жатыр, ал сіз ірі соманы алып жатырсыз. «Курьер» схемасы осылай жұмыс істейді: полиция не банк атынан қоңырау шалып, ақшаны алып, «қызметкерге» беруді сұрайды. Полиция да, банк та қолма-қол ақшаны ешқашан алмайды. Телефонды қойып, ақша алуды болдырмаңыз.'],
+  cashFaceH: ['Банкомат попросит посмотреть в камеру', 'Банкомат камераға қарауды сұрайды'],
+  cashFacePart: ['{f} из {m} прислал незнакомый человек меньше суток назад.', '{m} ішінен {f} бір тәуліктен аз уақыт бұрын бейтаныс адам жіберді.'],
+  cashFaceAll: ['Эти деньги прислал незнакомый человек меньше суток назад.', 'Бұл ақшаны бір тәуліктен аз уақыт бұрын бейтаныс адам жіберді.'],
+  cashFaceText: ['По одному QR-коду такие деньги не выдаются: снятие подтверждается по лицу, и банк знает, кто их получил. Если вас попросили снять эти деньги и кому-то передать, это схема дропперов. Безопаснее вернуть их отправителю.',
+                 'Мұндай ақша бір QR-код арқылы берілмейді: ақша алу бет-әлпет бойынша расталады, ал банк оны кім алғанын біледі. Сізден бұл ақшаны алып, біреуге беруді сұраса, бұл дропперлер схемасы. Оны жіберушіге қайтарған қауіпсіз.'],
+  cashFaceTake: ['Демо: посмотреть в камеру и снять', 'Демо: камераға қарап, ақшаны алу'],
+  cashReadyH: ['Можно снять {m} до {t}', '{m} сомасын {t} дейін алуға болады'],
+  cashReadyText: ['Час прошёл. Подойдите к банкомату и отсканируйте QR-код ещё раз. Если вас торопят или просят передать деньги «сотруднику», отмените снятие.',
+                  'Бір сағат өтті. Банкоматқа барып, QR-кодты қайта сканерлеңіз. Сізді асықтырса немесе ақшаны «қызметкерге» беруді сұраса, ақша алуды болдырмаңыз.'],
+  cashTake: ['Демо: снять в банкомате', 'Демо: банкоматтан алу'],
+  cashCancel: ['Отменить снятие', 'Ақша алуды болдырмау'],
+  cashCancelOk: ['Снятие отменено, деньги остались на счёте.', 'Ақша алу болдырылмады, ақша шотта қалды.'],
+  cashDelayed: ['Снятие отложено до {t}: идёт звонок с подозрительного номера.', 'Ақша алу {t} дейін кейінге қалдырылды: күдікті нөмірден қоңырау жүріп жатыр.'],
+  guardCashH: ['{w} снимает наличными {m}', '{w} қолма-қол {m} алып жатыр'],
+  guardCashText: ['Во время снятия звонили с номера, который оператор связи пометил как подозрительный: так работает схема «курьер». Снять можно будет в {t}. Позвоните и спросите, кто просит деньги; если это мошенники, отмените.',
+                  'Ақша алу кезінде байланыс операторы күдікті деп белгілеген нөмірден қоңырау шалды: «курьер» схемасы осылай жұмыс істейді. Ақшаны {t} бастап алуға болады. Қоңырау шалып, ақшаны кім сұрап жатқанын біліңіз; алаяқтар болса, болдырмаңыз.'],
+  guardCashReady: ['Час задержки прошёл, снять уже можно. Если это похоже на мошенников, позвоните и отмените.',
+                   'Бір сағаттық кідіріс өтті, ақшаны алуға болады. Алаяқтарға ұқсаса, қоңырау шалып, болдырмаңыз.'],
+  trH: ['Тренажёр: распознаете мошенника?', 'Жаттықтырғыш: алаяқты танисыз ба?'],
+  trAbout: ['8 ситуаций из жизни: звонки, сообщения, «подработка». Выберите, что бы вы сделали, — сразу покажем, как правильно. Банк сохраняет только итог, чтобы знать, каким схемам учить в первую очередь.',
+            'Өмірден алынған 8 жағдай: қоңыраулар, хабарламалар, «қосымша жұмыс». Не істейтініңізді таңдаңыз — қалай дұрыс екенін бірден көрсетеміз. Банк қай схемаларды бірінші үйрету керегін білу үшін тек қорытындыны сақтайды.'],
+  trOf: ['{s} из {n}', '{n} ішінен {s}'],
+  trLast: ['Прошлый результат: {s}, {d}', 'Алдыңғы нәтиже: {s}, {d}'],
+  trStart: ['Начать', 'Бастау'],
+  trAgain: ['Пройти ещё раз', 'Қайта өту'],
+  trStep: ['Ситуация {i} из {n} · {k}', '{n} ішінен {i}-жағдай · {k}'],
+  trRight: ['Верно.', 'Дұрыс.'],
+  trWrong: ['Неверно. Правильно: {r}.', 'Қате. Дұрысы: {r}.'],
+  trNext: ['Дальше', 'Келесі'],
+  trFinish: ['Узнать результат', 'Нәтижені білу'],
+  trResult: ['Ваш результат: {s}', 'Сіздің нәтижеңіз: {s}'],
   insistOk: ['Перевод остаётся на паузе. Его проверит сотрудник банка, ответ появится в списке операций.',
              'Аударым кідіртілген күйде қалады. Оны банк қызметкері тексереді, жауабы операциялар тізімінде шығады.'],
 };
@@ -870,6 +945,7 @@ async function load() {
   // blocked: счёт закрыт целиком. limited: заморожена только спорная сумма, переводы знакомым работают.
   const blocked = c.status === 'blocked', restricted = blocked || c.status === 'limited';
   $('blockCard').hidden = !restricted; $('transferCard').hidden = blocked; $('payBlocked').hidden = !blocked;
+  $('qrCard').hidden = blocked; $('cashCard').hidden = blocked;
   if (restricted) await loadBlock();
   else {
     // Если блокировку только что сняли, говорим об этом клиенту.
@@ -883,6 +959,7 @@ async function load() {
   renderSelf(c.self_report, c.status);
   renderGuardRequests(c.guardian_requests || []);
   renderCooling(c.cooling || [], c.guardian_cooling || []);
+  renderCash(c.cash, c.guardian_cash || []);
   renderLoan(c.loan);
   renderRental(c.rental);
   renderCasino(c.casino);
@@ -896,11 +973,12 @@ async function load() {
   renderAlerts(blocked ? [] : c.feed, c.recruit);   // пока счёт приостановлен, вернуть деньги самому нельзя
   $('feed').innerHTML = c.feed.map(t => {
     const incoming = t.direction === 'in';
-    const title = t.loan ? tr(incoming ? 'loanIn' : 'loanOut') : t.refund ? tr('refundTitle') : t.return_of ? tr('returnTitle') : (incoming ? tr('from', {who: t.sender}) : tr('toWho', {who: t.receiver}));
+    const title = t.cash ? tr('cashFeed') : t.loan ? tr(incoming ? 'loanIn' : 'loanOut') : t.refund ? tr('refundTitle') : t.return_of ? tr('returnTitle') : (incoming ? tr('from', {who: t.sender}) : tr('toWho', {who: t.receiver}));
     let tag = incoming ? null : heldTag(t);
     if (incoming && t.warning) tag = ['warn', tr('tagMaybeForeign')];
     if (incoming && t.returned) tag = ['', tr('tagReturnedIn')];
     if (!incoming && t.complained) tag = ['warn', tr('tagReported')];
+    if (t.cash && t.face) tag = ['', tr('tagFace')];
     const open = !incoming && t.case_status === 'open' ? ` <button class="link" data-case="${t.case_id}">${tr('decide')}</button>` : '';
     const answer = !incoming && t.decision_comment ? `<div class="muted">${tr('bankAnswer')} ${esc(t.decision_comment)}</div>` : '';
     const report = !incoming && t.can_complain && !t.complained
@@ -1105,6 +1183,135 @@ function renderCooling(own, wards) {
   clearTimeout(coolTimer);
   const next = [...own, ...wards].map(t => new Date(t.release_at) - new Date(serverNow)).sort((a, b) => a - b)[0];
   if (next !== undefined) coolTimer = setTimeout(load, Math.min(Math.max(next, 0) + 1500, 600000));
+}
+
+// Снятие наличных по QR-коду банкомата: своё снятие и снятие близкого человека, если клиент его доверенное лицо.
+let cashTimer = null;
+function cashAlert(w) {
+  const m = money(w.amount);
+  const face = () => esc(tr(w.foreign_amount < w.amount ? 'cashFacePart' : 'cashFaceAll', {f: money(w.foreign_amount), m})) + ' ' + tr('cashFaceText');
+  if (w.status === 'pending') return `<div class="alert hot"><h2>${esc(tr('cashDelayH', {m, t: hm(w.release_at)}))}</h2>
+      <p>${tr('cashDelayText')}</p>
+      <div class="actions"><button class="primary" data-cash-cancel="${w.id}">${tr('cashCancel')}</button></div></div>`;
+  if (w.release_at) return `<div class="alert cool"><h2>${esc(tr('cashReadyH', {m, t: hm(w.expires_at)}))}</h2>
+      <p>${tr('cashReadyText')}</p>${w.foreign_amount ? `<p>${face()}</p>` : ''}
+      <div class="actions"><button class="primary" data-cash-take="${w.id}">${tr(w.foreign_amount ? 'cashFaceTake' : 'cashTake')}</button>
+        <button class="soft" data-cash-cancel="${w.id}">${tr('cashCancel')}</button></div></div>`;
+  const ret = w.return_incoming;
+  return `<div class="alert hot"><h2>${tr('cashFaceH')}</h2>
+      <p>${face()}</p>
+      <div class="actions">${ret ? `<button class="primary" data-cash-return="${w.id}" data-inc="${ret.id}">${esc(tr('ret', {m: money(ret.amount)}))}</button>` : ''}
+        <button class="soft" data-cash-take="${w.id}">${tr('cashFaceTake')}</button>
+        <button class="ghost" data-cash-cancel="${w.id}">${tr('cashCancel')}</button></div></div>`;
+}
+function renderCash(own, wards) {
+  const mine = own ? cashAlert(own) : '';
+  $('cashState').innerHTML = mine;
+  $('cashAlerts').innerHTML = mine + wards.map(w => `
+    <div class="alert guard">
+      <h2>${esc(tr('guardCashH', {w: w.ward, m: money(w.amount)}))}</h2>
+      <p>${esc(w.status === 'pending' ? tr('guardCashText', {t: hm(w.release_at)}) : tr('guardCashReady'))}</p>
+      <div class="actions"><button class="primary" data-gcash="${w.id}">${tr('cashCancel')}</button></div>
+    </div>`).join('');
+  const bind = (sel, fn) => document.querySelectorAll(sel).forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { await fn(b); } catch (e) { note(e.message, 'err'); }
+    load();
+  });
+  bind('[data-cash-cancel]', async b => { await api(`/cash/${b.dataset.cashCancel}/cancel`, {}); note(tr('cashCancelOk'), 'ok'); });
+  bind('[data-cash-take]', async b => { const r = await api(`/cash/${b.dataset.cashTake}/take`, {}); note(tr('cashDone', {m: money(r.amount)}), 'ok'); });
+  // Вернуть чужие деньги отправителю: сначала снятие отменяется, иначе эти деньги зарезервированы под него.
+  bind('[data-cash-return]', async b => {
+    await api(`/cash/${b.dataset.cashReturn}/cancel`, {});
+    const r = await api(`/incoming/${b.dataset.inc}/return`, {}); note(tr('returnedOk', {m: money(r.amount)}), 'ok');
+  });
+  bind('[data-gcash]', async b => { await api(`/guardian/cash/${b.dataset.gcash}/cancel`, {}); note(tr('cashCancelOk'), 'ok'); });
+  // Когда задержка закончится или банкомат перестанет ждать, экран обновится сам.
+  clearTimeout(cashTimer);
+  const next = [own && (own.status === 'pending' ? own.release_at : own.expires_at), ...wards.map(w => w.status === 'pending' ? w.release_at : null)]
+    .filter(Boolean).map(s => new Date(s) - new Date(serverNow)).filter(x => x > -60000).sort((a, b) => a - b)[0];
+  if (next !== undefined) cashTimer = setTimeout(load, Math.min(Math.max(next, 0) + 1500, 600000));
+}
+$('cashScan').onclick = async () => {
+  note(''); $('cashScan').disabled = true;
+  try {
+    const r = await api('/cash/withdraw', {amount: Math.floor(+$('cashAmount').value || 0)});
+    $('cashAmount').value = '';
+    if (r.status === 'done') note(tr('cashDone', {m: money(r.amount)}), 'ok');
+    else if (r.status === 'pending') note(tr('cashDelayed', {t: hm(r.release_at)}), 'err');
+  } catch (e) { note(e.message, 'err'); }
+  $('cashScan').disabled = false;
+  await load();
+  if ($('cashState').innerHTML) $('cashState').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+};
+
+// Проверка QR-кода перед оплатой. В демо наклейки — готовые строки QR: настоящий магазин, подменённая парковка,
+// кофейня со счётом в другом банке. Оплата — обычный перевод со всеми проверками.
+const QR = {parking: [1003, 500], shop: [1015, 18500], cafe: [1016, 1800]};
+async function checkQr(key) {
+  const [acc, amount] = QR[key];
+  const payload = `bccpay://pay?acc=${acc}&name=${encodeURIComponent(tr('qrName_' + key))}&amount=${amount}`;
+  $('qrResult').innerHTML = '';
+  try {
+    const r = await api('/qr/check', {payload});
+    let html = `<div class="msgres ${{ok: 'none', caution: 'caution', danger: 'danger'}[r.verdict]}"><h3>${esc(r.title)}</h3>
+      <p><b>${tr('qrWho')}</b> ${esc(r.receiver)}</p><p>${esc(r.text)}</p>`;
+    if (r.amount) html += `<p>${esc(tr('qrSum', {m: money(r.amount)}))}</p>`;
+    if (r.receiver_id && r.amount) html += `<button class="${r.verdict === 'ok' ? 'primary' : 'soft'}" id="qrPay">${esc(tr('qrPay', {m: money(r.amount)}))}</button>`;
+    $('qrResult').innerHTML = html + '</div>';
+    if ($('qrPay')) $('qrPay').onclick = async () => {
+      const x = await pay(r.receiver_id, r.amount, $('qrPay'));
+      if (x && x.status !== 'held') $('qrResult').innerHTML = '';
+    };
+  } catch (e) { $('qrResult').innerHTML = `<div class="note err">${esc(e.message)}</div>`; }
+}
+document.querySelectorAll('[data-qr]').forEach(b => b.onclick = () => checkQr(b.dataset.qr));
+
+// Тренажёр против мошенников: по одной ситуации, объяснение сразу после ответа.
+let trainer = null;
+async function loadTrainer() {
+  const forWho = me;
+  const r = await api('/trainer').catch(() => null);
+  if (!r || forWho !== me) return;
+  trainer = {qs: r.questions, i: -1, answers: {}, shown: null, result: null, last: r.last};
+  renderTrainer();
+}
+function renderTrainer() {
+  const box = $('trainerCard'), s = trainer;
+  if (!s) { box.innerHTML = ''; return; }
+  const of = (k, n) => tr('trOf', {s: k, n});
+  let html = `<h2>${tr('trH')}</h2>`;
+  if (s.result) {
+    const lv = s.result.score === s.result.total ? 'none' : s.result.score >= s.result.total - 2 ? 'caution' : 'danger';
+    html += `<div class="msgres ${lv}" style="margin-top:0"><h3>${esc(tr('trResult', {s: of(s.result.score, s.result.total)}))}</h3><p>${esc(s.result.text)}</p></div>
+      <button class="primary" id="trStart">${tr('trAgain')}</button>`;
+  } else if (s.i < 0) {
+    html += `<p class="muted">${tr('trAbout')}</p>` +
+      (s.last ? `<p><b>${esc(tr('trLast', {s: of(s.last.score, s.last.total), d: dateText(s.last.at)}))}</b></p>` : '') +
+      `<button class="primary" id="trStart">${tr(s.last ? 'trAgain' : 'trStart')}</button>`;
+  } else {
+    const q = s.qs[s.i], a = s.shown;
+    html += `<div class="muted">${esc(tr('trStep', {i: s.i + 1, n: s.qs.length, k: q.kind}))}</div><p><b>${esc(q.text)}</b></p>` +
+      q.options.map(o => `<button class="${a ? (o.id === a.right ? 'primary' : o.id === s.answers[q.id] ? 'soft' : 'ghost') : 'soft'}" data-tr="${o.id}" style="margin-top:8px;text-align:left">${esc(o.text)}</button>`).join('');
+    if (a) html += `<div class="note ${a.correct ? 'ok' : 'err'}">${esc(a.correct ? tr('trRight') : tr('trWrong', {r: q.options.find(o => o.id === a.right).text}))} ${esc(a.explain)}</div>
+      <button class="primary" id="trNext">${tr(s.i + 1 < s.qs.length ? 'trNext' : 'trFinish')}</button>`;
+  }
+  box.innerHTML = html;
+  const top = () => box.scrollIntoView({behavior: 'smooth', block: 'start'});
+  if ($('trStart')) $('trStart').onclick = () => { Object.assign(s, {i: 0, answers: {}, shown: null, result: null}); renderTrainer(); top(); };
+  if (!s.shown) box.querySelectorAll('[data-tr]').forEach(b => b.onclick = async () => {
+    const q = s.qs[s.i];
+    try { s.shown = await api('/trainer/answer', {qid: q.id, choice: b.dataset.tr}); s.answers[q.id] = b.dataset.tr; renderTrainer(); }
+    catch (e) { note(e.message, 'err'); }
+  });
+  if ($('trNext')) $('trNext').onclick = async () => {
+    if (s.i + 1 < s.qs.length) { s.i++; s.shown = null; renderTrainer(); top(); return; }
+    try {
+      s.result = await api('/trainer/finish', {answers: s.answers});
+      s.last = {score: s.result.score, total: s.result.total, at: serverNow};
+      renderTrainer(); top();
+    } catch (e) { note(e.message, 'err'); }
+  };
 }
 
 // Свежий кредит: напоминаем, что банк не просит брать кредит ради «отмены заявки», и даём вернуть его.
@@ -1316,19 +1523,25 @@ $('callToggle').onclick = async () => {
   if (r !== undefined) renderCall(r);
 };
 
-$('send').onclick = async () => {
-  note(''); $('send').disabled = true;
+async function pay(receiver_id, amount, btn) {
+  note(''); btn.disabled = true;
+  let r = null;
   try {
     // Отметки приложения о ходе перевода («перевод под диктовку»). В демо их ставят переключатели слева.
     const session = Object.fromEntries([...document.querySelectorAll('[data-sess]')].map(b => [b.dataset.sess, b.checked]));
-    const body = {receiver_id: +$('to').value, amount: Math.floor(+$('amount').value)};
+    const body = {receiver_id, amount};
     if (Object.values(session).some(Boolean)) body.session = session;
-    const r = await api('/transfers', body);
+    r = await api('/transfers', body);
     if (r.status === 'held') showStop(r);
-    else if (r.status === 'pending') { note(tr('coolSent', {t: hm(r.release_at)}), 'err'); $('amount').value = ''; }
-    else { note(tr('done'), 'ok'); $('amount').value = ''; }
+    else if (r.status === 'pending') note(tr('coolSent', {t: hm(r.release_at)}), 'err');
+    else note(tr('done'), 'ok');
   } catch (e) { note(e.message, 'err'); }
-  $('send').disabled = false; load();
+  btn.disabled = false; load();
+  return r;
+}
+$('send').onclick = async () => {
+  const r = await pay(+$('to').value, Math.floor(+$('amount').value), $('send'));
+  if (r && r.status !== 'held') $('amount').value = '';
 };
 $('ret').onclick = async () => {
   $('overlay').classList.remove('show');
@@ -1358,14 +1571,17 @@ function clearScreen() {
   $('idCards').innerHTML = ''; $('accessCard').innerHTML = '';
   $('coolAlerts').innerHTML = ''; $('loanCard').innerHTML = ''; $('rentalCard').innerHTML = ''; $('bizLine').textContent = ''; $('msgText').value = ''; $('msgResult').innerHTML = ''; clearTimeout(coolTimer);
   $('compCards').innerHTML = ''; $('selfCard').hidden = true; selfKey = ''; selfMsg = '';
+  $('cashAlerts').innerHTML = ''; $('cashState').innerHTML = ''; $('cashAmount').value = ''; clearTimeout(cashTimer);
+  $('qrResult').innerHTML = ''; trainer = null; $('trainerCard').innerHTML = '';
   document.querySelectorAll('[data-sess]').forEach(b => { b.checked = false; });
 }
-$('who').onchange = async () => { clearScreen(); showTab('home'); await loginAs(+$('who').value); load(); };
+$('who').onchange = async () => { clearScreen(); showTab('home'); await loginAs(+$('who').value); load(); loadTrainer(); };
 // Язык хранится в cookie: сервер читает его и отвечает на том же языке.
 document.querySelectorAll('[data-lang]').forEach(b => b.onclick = async () => {
   L = b.dataset.lang;
   document.cookie = `ca_lang=${L}; path=/; max-age=31536000; samesite=strict`;
-  note(''); applyStatic(); await loadPeople(); load();
+  note(''); applyStatic(); await loadPeople(); load(); loadTrainer();
+  $('qrResult').innerHTML = '';
 });
 
 (async () => {
@@ -1373,7 +1589,7 @@ document.querySelectorAll('[data-lang]').forEach(b => b.onclick = async () => {
   await loadPeople();
   const s = await api('/me').catch(() => null);
   await loginAs(s && s.client ? s.client.client_id : people[0].id);
-  load();
+  load(); loadTrainer();
 })();
 </script>
 <script src="/tour.js"></script>

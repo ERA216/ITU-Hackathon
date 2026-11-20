@@ -10,14 +10,14 @@ import threading
 import time
 from datetime import datetime, timedelta
 from html import escape
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote
 
 from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response as RawResponse
 from pydantic import BaseModel, Field
 
-from . import clock, db, engine, i18n, journal, messages, metrics, seed, vault
+from . import clock, db, engine, i18n, journal, messages, metrics, seed, trainer, vault
 from .i18n import t
 
 conn = db.connect()
@@ -105,6 +105,12 @@ EVENT_TEXT = {
     "approval_confirmed": "Второй сотрудник подтвердил действие",
     "approval_rejected": "Второй сотрудник отклонил действие",
     "identity_theft": "Владелец сообщил, что не открывал этот счёт",
+    "cash_done": "Клиент снял наличные в банкомате",
+    "cash_face_asked": "Снятие денег незнакомца: банкомат просит проверку по лицу",
+    "cash_delayed": "Крупное снятие наличных во время подозрительного звонка отложено на час",
+    "cash_cancelled": "Снятие наличных отменено",
+    "cash_stopped": "Снятие наличных не выполнено: по счёту ограничения",
+    "cash_expired": "Снятие наличных не завершено: банкомат не дождался клиента",
 }
 INTERBANK_STATUS = {"sent": "Запрос отправлен, ждём ответ", "frozen": "Деньги заморожены в другом банке",
                     "gone": "Деньги уже сняты или ушли дальше", "answered": "Ответили автоматически"}
@@ -143,6 +149,7 @@ def tx():
         try:
             _settle_due()       # переводы, у которых закончился период охлаждения, уходят получателю
             _settle_safes()     # сейфы, которые просили открыть сутки назад, открываются
+            _settle_cash()      # отложенные снятия наличных становятся доступны, неиспользованные истекают
             yield
             conn.commit()
         except BaseException:
@@ -398,15 +405,19 @@ def _refresh_status(cid: int) -> str:
     status = "blocked" if "full" in scopes else "limited" if scopes else "active"
     conn.execute("UPDATE clients SET status=? WHERE id=?", (status, cid))
     if status != "active":
+        for w in conn.execute("SELECT * FROM cash_withdrawals WHERE client_id=? AND status IN ('pending','ready')",
+                              (cid,)).fetchall():
+            _cash_cancel(w, "system", "cash_stopped")
         conn.execute("UPDATE clearances SET revoked_at=? WHERE client_id=? AND revoked_at IS NULL",
                      (_now().isoformat(), cid))
     return status
 
 
 def _held_sum(cid: int) -> int:
-    # Деньги под перевод на паузе или в периоде охлаждения зарезервированы: потратить их ещё раз нельзя.
+    # Деньги под перевод на паузе или в периоде охлаждения и под снятие наличных, которое ждёт у банкомата,
+    # зарезервированы: потратить их ещё раз нельзя.
     return conn.execute("""SELECT COALESCE(SUM(amount),0) AS s FROM transfers
-                           WHERE sender_id=? AND status IN ('held','pending')""", (cid,)).fetchone()["s"]
+                           WHERE sender_id=? AND status IN ('held','pending')""", (cid,)).fetchone()["s"] + _cash_reserved(cid)
 
 
 def _frozen_sum(cid: int, except_case: int | None = None) -> int:
@@ -469,7 +480,7 @@ def client_feed(cid: int, s: dict = Depends(session)):
            WHERE t.sender_id=? OR (t.receiver_id=? AND t.status='done')   -- получатель не видит остановленные
            ORDER BY t.created_at DESC, t.id DESC LIMIT 30""",
         (cid, cid)).fetchall()
-    held, frozen, safe = _held_sum(cid), _frozen_sum(cid), _safe_sum(cid)
+    held, frozen, safe, cash = _held_sum(cid), _frozen_sum(cid), _safe_sum(cid), _cash_reserved(cid)
     feed = []
     for r in rows:
         item = dict(r) | {"direction": "in" if r["receiver_id"] == cid else "out",
@@ -484,13 +495,16 @@ def client_feed(cid: int, s: dict = Depends(session)):
             item["complained"] = bool(conn.execute("SELECT 1 FROM complaints WHERE transfer_id=?",
                                                    (r["id"],)).fetchone())
         feed.append(item)
-    feed = sorted(feed + _loan_feed(cid), key=lambda x: x["created_at"], reverse=True)[:30]
-    return {"id": c["id"], "name": c["name"], "balance": c["balance"], "held": held, "frozen": frozen,
+    feed = sorted(feed + _loan_feed(cid) + _cash_feed(cid), key=lambda x: x["created_at"], reverse=True)[:30]
+    active = _cash_active(cid)
+    return {"id": c["id"], "name": c["name"], "balance": c["balance"], "held": held - cash, "frozen": frozen,
             "available": max(0, c["balance"] - held - frozen - safe), "status": c["status"], "feed": feed,
+            "cash": _cash_view(active) if active else None,
+            "guardian_cash": _guardian_cash(cid),
             "loan": _loan_view(cid) if c["status"] != "blocked" else None,
             "safe": _safe_view(cid),
             "guardian_safe": _guardian_safe(cid),
-            "kind": c["kind"], "activity": c["activity"],
+            "kind": c["kind"], "activity": i18n.activity(c["activity"]),
             "rental": _rental_view(cid) if c["kind"] == "ip" and c["status"] != "blocked" else None,
             "casino": _casino_view(cid) if c["status"] != "blocked" else None,
             "own_accounts": _own_accounts(cid),
@@ -1532,6 +1546,293 @@ def guardian_cancel_pending(tid: int, s: dict = Depends(as_client)):
         raise HTTPException(409, t("cooling_none"))
     return _cancel_pending(tr, f"client:{s['client_id']}")
 
+# ---------- Снятие наличных по QR-коду банкомата ----------
+# Карта не нужна: банкомат показывает QR-код, клиент сканирует его в приложении (в демо — кнопка). Дропперы снимают
+# чужие деньги наличными, потому что наличные уже не вернуть. Поэтому деньги незнакомцев, пришедшие меньше суток
+# назад, по одному QR не выдаются: банкомат просит подтвердить снятие по лицу, и банк знает, кто их получил.
+# Крупное снятие во время звонка с подозрительного номера откладывается на час: так работает схема «курьер»
+# («снимите деньги и передайте нашему сотруднику»). Доверенное лицо видит отложенное снятие и может его отменить.
+
+CASH_STEP = 1000                # банкомат выдаёт купюры: сумма кратна 1 000 ₸
+CASH_FOREIGN_HOURS = 24         # деньги незнакомцев за это время снимаются только с проверкой по лицу
+CASH_WAIT_MINUTES = 15          # сколько банкомат ждёт проверки по лицу
+CASH_READY_MINUTES = 30         # после задержки снять можно в течение этого времени
+
+
+class CashIn(BaseModel):
+    amount: int = Field(gt=0, le=100_000_000)
+
+
+def _cash_reserved(cid: int) -> int:
+    return conn.execute("""SELECT COALESCE(SUM(amount),0) AS s FROM cash_withdrawals
+                           WHERE client_id=? AND status IN ('pending','ready')""", (cid,)).fetchone()["s"]
+
+
+def _cash_active(cid: int):
+    return conn.execute("""SELECT * FROM cash_withdrawals WHERE client_id=? AND status IN ('pending','ready')
+                           ORDER BY id DESC""", (cid,)).fetchone()
+
+
+def _foreign_cash(cid: int, now: datetime) -> tuple[int, list]:
+    """Деньги незнакомцев за последние сутки, которые клиент ещё не вернул и не снял по лицу: сумма и входящие.
+
+    Как и движок, считаем, что клиент сначала тратит свои деньги, а чужие остаются на счёте. Отметка «Я знаю
+    отправителя» снятие по лицу не отменяет: её может нажать и дроппер.
+    """
+    if _client(cid)["kind"] == "ip":
+        return 0, []                # выручка ИП от незнакомых покупателей — обычное дело
+    since = (now - timedelta(hours=CASH_FOREIGN_HOURS)).isoformat()
+    incs = [i for i in engine._stranger_incomings(conn, cid, now)
+            if i["created_at"] >= since and i["amount"] >= WARN_MIN_AMOUNT]
+    if not incs:
+        return 0, []
+    used = conn.execute("""SELECT COALESCE(SUM(foreign_amount),0) AS s FROM cash_withdrawals WHERE client_id=?
+                           AND status IN ('done','pending','ready') AND created_at >= ?""",
+                        (cid, min(i["created_at"] for i in incs))).fetchone()["s"]
+    return max(0, sum(i["amount"] for i in incs) - used), incs
+
+
+def _cash_view(w) -> dict:
+    out = {k: w[k] for k in ("id", "amount", "foreign_amount", "status", "created_at", "release_at", "expires_at")}
+    out["return_incoming"] = None
+    if w["foreign_amount"] and w["status"] in ("pending", "ready"):
+        # Вместо снятия чужие деньги можно вернуть отправителю: предлагаем последний такой входящий.
+        _, incs = _foreign_cash(w["client_id"], _now())
+        inc = max(incs, key=lambda i: i["created_at"], default=None)
+        if inc:
+            who = _client(inc["sender_id"])
+            out["return_incoming"] = {"id": inc["id"], "amount": inc["amount"], "sender": i18n.name(who["id"], who["name"])}
+    return out
+
+
+def _cash_feed(cid: int) -> list[dict]:
+    """Снятия наличных в ленте операций клиента."""
+    base = {"cash": True, "status": "done", "return_of": None, "case_id": None, "sender_id": None, "receiver_id": None,
+            "warning": False, "returned": False, "complained": False, "refund": False, "can_complain": False,
+            "direction": "out"}
+    return [base | {"id": f"cash-{w['id']}", "amount": w["amount"], "created_at": w["done_at"], "face": bool(w["face"])}
+            for w in conn.execute("""SELECT * FROM cash_withdrawals WHERE client_id=? AND status='done'
+                                     ORDER BY id DESC LIMIT 30""", (cid,))]
+
+
+def _guardian_cash(gid: int) -> list[dict]:
+    """Для доверенного лица: близкий человек снимает крупную сумму во время подозрительного звонка."""
+    rows = conn.execute(
+        """SELECT w.*, c.name FROM cash_withdrawals w JOIN guardians g ON g.client_id=w.client_id
+           JOIN clients c ON c.id=w.client_id
+           WHERE g.guardian_id=? AND (g.remove_at IS NULL OR g.remove_at > ?)
+           AND w.status IN ('pending','ready') AND w.release_at IS NOT NULL ORDER BY w.id""",
+        (gid, _now().isoformat())).fetchall()
+    return [{"id": r["id"], "ward_id": r["client_id"], "ward": i18n.name(r["client_id"], r["name"]),
+             "amount": r["amount"], "status": r["status"], "release_at": r["release_at"]} for r in rows]
+
+
+def _cash_give(cid: int, amount: int):
+    conn.execute("UPDATE clients SET balance = balance - ? WHERE id=?", (amount, cid))
+    _trim_safe(cid)
+
+
+def _cash_cancel(w, actor: str, action: str = "cash_cancelled") -> dict:
+    conn.execute("UPDATE cash_withdrawals SET status='cancelled' WHERE id=?", (w["id"],))
+    log(actor, action, None, None, client=w["client_id"], amount=w["amount"])
+    return {"status": "cancelled", "amount": w["amount"]}
+
+
+def _settle_cash():
+    """Отложенное снятие становится доступным через час; снятие, которое банкомат не дождался, истекает."""
+    now = _now()
+    for w in conn.execute("SELECT * FROM cash_withdrawals WHERE status='pending' AND release_at <= ?",
+                          (now.isoformat(),)).fetchall():
+        if _client(w["client_id"])["status"] != "active":
+            _cash_cancel(w, "system", "cash_stopped")
+        else:
+            until = (datetime.fromisoformat(w["release_at"]) + timedelta(minutes=CASH_READY_MINUTES)).isoformat()
+            conn.execute("UPDATE cash_withdrawals SET status='ready', expires_at=? WHERE id=?", (until, w["id"]))
+    for w in conn.execute("SELECT * FROM cash_withdrawals WHERE status='ready' AND expires_at <= ?",
+                          (now.isoformat(),)).fetchall():
+        conn.execute("UPDATE cash_withdrawals SET status='expired' WHERE id=?", (w["id"],))
+        log("system", "cash_expired", None, None, client=w["client_id"], amount=w["amount"])
+
+
+@app.post("/cash/withdraw")
+def cash_withdraw(body: CashIn, s: dict = Depends(as_client)):
+    """Клиент отсканировал QR-код банкомата. Наличные выдаются сразу, после проверки по лицу (деньги незнакомцев
+    за последние сутки) или через час (крупная сумма во время звонка с подозрительного номера)."""
+    cid, now = s["client_id"], _now()
+    if _client(cid)["status"] == "blocked":
+        raise HTTPException(403, t("account_blocked"))
+    if body.amount % CASH_STEP:
+        raise HTTPException(400, t("cash_step", m=_money(CASH_STEP)))
+    if _cash_active(cid):
+        raise HTTPException(409, t("cash_active"))
+    available = _available(cid)
+    if available < body.amount:
+        safe = _safe_sum(cid)
+        if safe and available + safe >= body.amount:
+            # Снять можно было бы только деньги из сейфа. Отказ пишем в журнал: так видно, сколько сейф уберёг.
+            log(f"client:{cid}", "safe_refused", None, None, amount=body.amount, cash=True)
+            return JSONResponse({"detail": t("cash_no_funds_safe", m=_money(safe))}, status_code=400)
+        raise HTTPException(400, t("no_funds_frozen" if _frozen_sum(cid) else "no_funds"))
+    foreign, _ = _foreign_cash(cid, now)
+    part = max(0, body.amount - max(0, available - foreign))     # сколько чужих денег в этой сумме
+    delay = engine.call_active(conn, cid, now) and body.amount >= COOLING_MIN
+    if delay:
+        release = (now + timedelta(minutes=COOLING_MINUTES)).isoformat()
+        wid = conn.execute("""INSERT INTO cash_withdrawals(client_id,amount,foreign_amount,status,created_at,release_at)
+                              VALUES(?,?,?,'pending',?,?)""", (cid, body.amount, part, now.isoformat(), release)).lastrowid
+        log("system", "cash_delayed", None, None, client=cid, amount=body.amount, release_at=release)
+    elif part:
+        until = (now + timedelta(minutes=CASH_WAIT_MINUTES)).isoformat()
+        wid = conn.execute("""INSERT INTO cash_withdrawals(client_id,amount,foreign_amount,status,created_at,expires_at)
+                              VALUES(?,?,?,'ready',?,?)""", (cid, body.amount, part, now.isoformat(), until)).lastrowid
+        log("system", "cash_face_asked", None, None, client=cid, amount=body.amount, foreign=part)
+    else:
+        wid = conn.execute("""INSERT INTO cash_withdrawals(client_id,amount,status,created_at,done_at)
+                              VALUES(?,?,'done',?,?)""", (cid, body.amount, now.isoformat(), now.isoformat())).lastrowid
+        _cash_give(cid, body.amount)
+        log(f"client:{cid}", "cash_done", None, None, amount=body.amount)
+    return _cash_view(conn.execute("SELECT * FROM cash_withdrawals WHERE id=?", (wid,)).fetchone())
+
+
+def _own_cash(s: dict, wid: int):
+    w = conn.execute("SELECT * FROM cash_withdrawals WHERE id=?", (wid,)).fetchone()
+    if not w or w["client_id"] != s["client_id"]:
+        raise HTTPException(404, t("cash_not_found"))
+    return w
+
+
+@app.post("/cash/{wid}/take")
+def cash_take(wid: int, s: dict = Depends(as_client)):
+    """Банкомат выдаёт наличные: после проверки по лицу (в демо — кнопка) или когда прошёл час задержки."""
+    w, cid = _own_cash(s, wid), s["client_id"]
+    if w["status"] == "pending":
+        raise HTTPException(409, t("cash_wait", t=w["release_at"][11:16]))
+    if w["status"] != "ready":
+        raise HTTPException(409, t("cash_none"))
+    if _client(cid)["status"] == "blocked":
+        raise HTTPException(403, t("account_blocked"))
+    if _available(cid) < 0:
+        # Пока снятие ждало, часть денег заморозили (например, по жалобе): выдать всю сумму уже нельзя.
+        raise HTTPException(400, t("no_funds_frozen"))
+    face = 1 if w["foreign_amount"] else 0
+    conn.execute("UPDATE cash_withdrawals SET status='done', done_at=?, face=? WHERE id=?", (_now().isoformat(), face, wid))
+    _cash_give(cid, w["amount"])
+    log(f"client:{cid}", "cash_done", None, None, amount=w["amount"], foreign=w["foreign_amount"], face=bool(face))
+    return {"status": "done", "amount": w["amount"], "face": bool(face)}
+
+
+@app.post("/cash/{wid}/cancel")
+def cash_cancel(wid: int, s: dict = Depends(as_client)):
+    """Клиент передумал снимать: деньги остаются на счёте."""
+    w = _own_cash(s, wid)
+    if w["status"] not in ("pending", "ready"):
+        raise HTTPException(409, t("cash_none"))
+    return _cash_cancel(w, f"client:{s['client_id']}")
+
+
+@app.post("/guardian/cash/{wid}/cancel")
+def guardian_cash_cancel(wid: int, s: dict = Depends(as_client)):
+    """Доверенное лицо отменяет отложенное снятие близкого человека."""
+    w = conn.execute("SELECT * FROM cash_withdrawals WHERE id=?", (wid,)).fetchone()
+    g = _guardian_of(w["client_id"]) if w else None
+    if not w or not g or g["guardian_id"] != s["client_id"] or not w["release_at"]:
+        raise HTTPException(404, t("cash_not_found"))
+    if w["status"] not in ("pending", "ready"):
+        raise HTTPException(409, t("cash_none"))
+    return _cash_cancel(w, f"client:{s['client_id']}")
+
+
+# ---------- Проверка QR-кода перед оплатой ----------
+# Мошенники клеят свой QR-код поверх настоящего на парковках, в кафе и магазинах. Платёжный QR банка выдаётся
+# только счёту бизнеса, поэтому до оплаты приложение показывает, кто на самом деле получит деньги, и его риск.
+# В демо QR-код — строка вида bccpay://pay?acc=<счёт>&name=<что написано на наклейке>&amount=<сумма>.
+
+QR_PREFIX = "bccpay://pay?"
+
+
+class QrIn(BaseModel):
+    payload: str = Field(max_length=1000)
+
+
+def _parse_qr(payload: str) -> tuple[int, str, int]:
+    if not payload.startswith(QR_PREFIX):
+        raise HTTPException(400, t("qr.bad"))
+    q = parse_qs(payload[len(QR_PREFIX):])
+    acc, amount = (q.get("acc") or [""])[0], (q.get("amount") or ["0"])[0]
+    if not acc.isdigit() or not amount.isdigit() or int(amount) > 100_000_000:
+        raise HTTPException(400, t("qr.bad"))
+    return int(acc), (q.get("name") or [""])[0].strip()[:80], int(amount)
+
+
+@app.post("/qr/check")
+def check_qr(body: QrIn, s: dict = Depends(as_client)):
+    """Кто получит деньги по QR-коду. Деньги не уходят: оплата — обычным переводом со всеми проверками."""
+    cid = s["client_id"]
+    rid, claimed, amount = _parse_qr(body.payload.strip())
+    rc = conn.execute("SELECT * FROM clients WHERE id=?", (rid,)).fetchone()
+    if not rc:
+        raise HTTPException(404, t("qr.unknown"))
+    if rid == cid:
+        raise HTTPException(400, t("self_transfer"))
+    risk = _recipient_risk(cid, rid)
+    if rc["kind"] == "person":
+        verdict, why = "danger", "qr.person"         # платёжный QR не может вести на карту частного лица
+    elif risk["level"] == "red":
+        verdict, why = "danger", "qr.red"
+    elif rc["kind"] == "external":
+        verdict, why = "caution", "qr.external"
+    elif risk["level"] == "yellow":
+        verdict, why = "caution", "qr.yellow"
+    else:
+        verdict, why = "ok", "qr.ok"
+    conn.execute("INSERT INTO qr_checks(client_id,receiver_id,verdict,at) VALUES(?,?,?,?)",
+                 (cid, rid, verdict, _now().isoformat()))
+    # Имя частного лица не показываем: достаточно того, что это не магазин и не парковка.
+    receiver = (t("qr.who_person") if rc["kind"] == "person" else
+                t("qr.who_external", b=rc["bank"] or "") if rc["kind"] == "external" else
+                t("qr.who_ip", n=i18n.name(rid, rc["name"]).split(" (")[0], a=i18n.activity(rc["activity"]) or ""))
+    return {"verdict": verdict, "title": t(f"qr.{verdict}.title"), "text": t(why, n=claimed or "—"),
+            "claimed": claimed, "amount": amount, "receiver": receiver,
+            "receiver_id": rid if verdict != "danger" else None, "risk": risk}
+
+
+# ---------- Тренажёр против мошенников ----------
+# Короткие учебные ситуации: звонки, сообщения, предложения «подработки». Клиент выбирает, что сделать, и сразу видит
+# объяснение. Банк хранит только результат и номера ситуаций с ошибкой: так видно, каким схемам учить в первую очередь.
+
+class TrainerAnswerIn(BaseModel):
+    qid: str = Field(max_length=32)
+    choice: str = Field(max_length=8)
+
+
+class TrainerFinishIn(BaseModel):
+    answers: dict[str, str] = Field(max_length=40)
+
+
+@app.get("/trainer")
+def trainer_questions(s: dict = Depends(as_client)):
+    last = conn.execute("SELECT score, total, at FROM trainer_results WHERE client_id=? ORDER BY id DESC LIMIT 1",
+                        (s["client_id"],)).fetchone()
+    return {"questions": trainer.questions(i18n.lang.get()), "last": dict(last) if last else None}
+
+
+@app.post("/trainer/answer")
+def trainer_answer(body: TrainerAnswerIn, s: dict = Depends(as_client)):
+    r = trainer.check(body.qid, body.choice, i18n.lang.get())
+    if r is None:
+        raise HTTPException(400, t("bad_input"))
+    return r
+
+
+@app.post("/trainer/finish")
+def trainer_finish(body: TrainerFinishIn, s: dict = Depends(as_client)):
+    r = trainer.score(body.answers, i18n.lang.get())
+    if r is None:
+        raise HTTPException(400, t("bad_input"))
+    conn.execute("INSERT INTO trainer_results(client_id,score,total,wrong,at) VALUES(?,?,?,?,?)",
+                 (s["client_id"], r["score"], r["total"], json.dumps(r["wrong"]), _now().isoformat()))
+    return r
+
 
 # ---------- «Сейф»: сбережения, которые нельзя перевести через приложение ----------
 # Как Money Lock в банках Сингапура. Положить деньги в сейф можно сразу, открыть — только в отделении
@@ -2020,8 +2321,20 @@ def _analyst_case(case_id: int) -> dict:
         "refundable": _refundable(case),
         "complaint": _analyst_complaint(case),
         "self_report": _analyst_self_report(case),
+        "cash": _analyst_cash(case),
         "can_escalate": case["kind"] == "block" and case["scope"] == "partial" and case["status"] in UNRESOLVED,
     }
+
+
+def _analyst_cash(case) -> list[dict]:
+    """Снятия наличных клиента за неделю до случая и после: дропперы снимают чужие деньги, чтобы их не вернули.
+    Снятие денег незнакомца подтверждено по лицу — банк знает, кто их получил."""
+    since = (datetime.fromisoformat(case["created_at"]) - timedelta(days=7)).isoformat()
+    rows = conn.execute("""SELECT * FROM cash_withdrawals WHERE client_id=? AND created_at >= ?
+                           AND (status='done' OR foreign_amount > 0 OR release_at IS NOT NULL) ORDER BY id""",
+                        (case["client_id"], since)).fetchall()
+    return [{"amount": w["amount"], "foreign_amount": w["foreign_amount"], "status": w["status"], "face": bool(w["face"]),
+             "delayed": bool(w["release_at"]), "at": w["done_at"] or w["created_at"]} for w in rows]
 
 
 def _analyst_complaint(case) -> dict | None:

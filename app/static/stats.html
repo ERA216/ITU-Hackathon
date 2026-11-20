@@ -177,14 +177,18 @@ function drawBars(host, data) {
     tile('Клиентов уберегли от статуса дроппера', num(m.protected_clients), 'вернули чужие деньги, а не переслали их дальше') +
     tile('Не пришлось возмещать', compact(m.compensation_avoided), `не ушло переводов на счета из базы Антифрод-центра: ${num(m.compensation_count)}`);
   $('prevent').innerHTML =
-    tile('В сейфах', compact(m.safe_amount), `клиентов: ${num(m.safe_clients)}; переводов не дал сейф: ${num(m.safe_refused)} на ${compact(m.safe_refused_amount)}; просили открыть: ${num(m.safe_unlock_requests)}, отменили: ${num(m.safe_unlock_cancelled)}`) +
+    tile('В сейфах', compact(m.safe_amount), `клиентов: ${num(m.safe_clients)}; переводов и снятий не дал сейф: ${num(m.safe_refused)} на ${compact(m.safe_refused_amount)}; просили открыть: ${num(m.safe_unlock_requests)}, отменили: ${num(m.safe_unlock_cancelled)}`) +
     tile('Отменено в период охлаждения', compact(m.cooling_saved), `${num(m.cooling_cancelled)} из ${num(m.cooling)} отложенных крупных первых переводов`) +
     tile('Остановлено денег из свежего кредита', compact(m.loan_saved), `остановок: ${num(m.loan_stops)}, кредитов вернули банку: ${num(m.loans_repaid)}`) +
     tile('Остановлено переводов под диктовку', compact(m.dictation_saved), `остановок: ${num(m.dictation_stops)}; признаки — звонок, вставленные реквизиты, ссылка из мессенджера, новое устройство`) +
     tile('Остановлено выплат онлайн-казино', num(m.casino_stops), 'одни и те же незнакомцы платят на карту и получают с неё деньги — как ставка и выигрыш') +
     tile('Сети дропперов', num(m.networks), `счетов в сетях: ${num(m.network_accounts)}; дроп-телефонов: ${num(m.network_farms)} — с одного телефона входят несколько разных людей`) +
     tile('Счетов ИП с признаками аренды', num(m.rental_accounts), `остановлено переводов: ${num(m.rental_stops)}, приостановлено счетов: ${num(m.rental_suspended)}`) +
-    tile('Проверено сообщений', num(m.message_checks), `похожи на схемы мошенников: ${num(m.message_danger)}`);
+    tile('Проверено сообщений', num(m.message_checks), `похожи на схемы мошенников: ${num(m.message_danger)}`) +
+    tile('Не снято наличными во время звонка', compact(m.cash_delayed_saved), `крупных снятий во время подозрительного звонка: ${num(m.cash_delayed)}, не состоялись: ${num(m.cash_delayed_stopped)} — отменили клиент, доверенное лицо или банк`) +
+    tile('Чужие деньги — только по лицу', num(m.cash_face), `снятий денег незнакомцев за последние сутки; подтвердили по лицу: ${num(m.cash_face_done)}, не стали снимать: ${compact(m.cash_face_kept)}`) +
+    tile('Проверено QR-кодов', num(m.qr_checks), `похожи на подмену: ${num(m.qr_danger)}`) +
+    tile('Прошли тренажёр', num(m.trainer_clients), m.trainer_runs ? `прохождений: ${num(m.trainer_runs)}, средний результат: ${pct(m.trainer_avg)}${m.trainer_hardest ? `; чаще всего ошибаются: ${m.trainer_hardest}` : ''}` : 'учебные звонки и сообщения мошенников в приложении');
   $('load').innerHTML =
     tile('Остановлено переводов', num(m.stops), `ждут решения сейчас: ${num(m.pending_stops)}`) +
     tile('Клиенты решили сами', pct(m.self_resolved_share), 'вернули деньги или отменили перевод без сотрудника банка') +
