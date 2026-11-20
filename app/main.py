@@ -178,6 +178,9 @@ async def guard(request: Request, call_next):
         return JSONResponse({"detail": t("too_big")}, status_code=411)
     response = await call_next(request)
     response.headers.update(SECURITY_HEADERS)
+    # Страницы и скрипты браузер каждый раз сверяет с сервером (по ETag — быстро): иначе после обновления
+    # на хостинге он мог открыть старый тур или старый экран из своего кэша.
+    response.headers.setdefault("Cache-Control", "no-cache")
     return response
 
 

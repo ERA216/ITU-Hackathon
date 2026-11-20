@@ -39,7 +39,9 @@
     {page: '/client', target: 'alerts', text: 'Айдане пришли 150 000 ₸ от незнакомого человека. Приложение сразу предупреждает: возможно, это чужие деньги, — и даёт вернуть их отправителю одной кнопкой.',
      run: () => persona(1001, 'home')},
     {page: '/client', target: 'recipientNote', text: 'Мошенник пишет: «Я ошибся, верните на другую карту». Ещё до перевода «светофор получателя» горит красным. Нажмите «Перевести» — перевод остановится, и Айдана увидит, почему это схема.',
-     run: async () => { await persona(1001, 'pay'); $('to').value = '1003'; $('amount').value = '150000'; await checkRecipient(); }},
+     run: async () => { await persona(1001, 'pay', 'transferCard'); $('to').value = '1003'; $('amount').value = '150000'; await checkRecipient(); }},
+    {page: '/client', target: 'cashCard', text: 'Ерлану «работодатель» велел снять присланные деньги наличными: так их уже не вернуть. Нажмите «Демо: отсканировать QR-код банкомата». Деньги незнакомых людей банкомат выдаёт только после проверки по лицу, а вместо снятия их можно вернуть отправителям.',
+     run: async () => { await persona(1010, 'pay', 'cashCard'); $('cashAmount').value = '100000'; }},
     {page: '/client', target: '[data-report]', text: 'Гульнар купила телефон по объявлению, а деньги ушли мошенникам. Нажмите «Это были мошенники?» у перевода Данияру: банк пойдёт по цепочке переводов, а Гульнар получит готовый текст заявления в полицию.',
      run: async function () {
        await persona(1006, 'home');
@@ -50,6 +52,8 @@
      run: async () => { await ensureComplaint(); await persona(1005, 'home'); }},
     {page: '/client', target: 'safeCard', text: 'Сбережения Мамы лежат в «Сейфе». Даже если мошенник уговорит её по телефону, перевести их через приложение нельзя: открыть сейф можно через сутки (дочь узнает и сможет отменить) или в отделении.',
      run: () => persona(1004, 'safe', 'safeCard')},
+    {page: '/client', target: 'qrCard', text: 'Мошенники клеят свой QR-код поверх настоящего на парковках и в кафе. Перед оплатой приложение показывает, кто на самом деле получит деньги: этот код ведёт на карту частного лица, а не на парковку. А во вкладке «Защита» есть тренажёр: 8 ситуаций с мошенниками и объяснением.',
+     run: async () => { await persona(1004, 'pay', 'qrCard'); await checkQr('parking'); }},
     {page: '/client', target: 'idCards', text: 'На имя Венеры по её данным и поддельному видео открыли счёт. Она узнаёт об этом сразу и нажимает «Это не я»: счёт закрыт, а Венера получает подтверждение для полиции и суда.',
      run: () => persona(1022, 'home')},
     {page: '/analyst', target: 'graph', analyst: true, text: 'Сотрудник банка видит граф денег и подсказку «невольный участник или организатор». Крупный возврат пострадавшей подтверждает второй сотрудник — правило двух ключей. ИИН и телефон клиента скрыты, просмотр записывается.',
@@ -107,8 +111,10 @@
   }
   function highlight(target) {
     document.querySelectorAll('.tour-hl').forEach(e => e.classList.remove('tour-hl'));
-    const el = target.startsWith('[') ? document.querySelector(target) : $(target);
-    if (!el) return;
+    const found = target.startsWith('[') ? document.querySelector(target) : $(target);
+    if (!found) return;
+    // Карточка из аккордеона экрана клиента подсвечивается вместе со своим заголовком.
+    const el = (found.classList.contains('card') && found.closest('.acc-item')) || found;
     el.classList.add('tour-hl');
     el.scrollIntoView({block: 'start', behavior: 'smooth'});
   }

@@ -47,6 +47,21 @@
   details { margin-top:8px; }
   summary { cursor:pointer; color:var(--muted); font-size:13px; }
   .scroll { overflow-x:auto; }
+  /* Главное сверху: четыре крупные цифры. */
+  .tiles.top { grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); }
+  .tiles.top .value { font-size:clamp(24px, 3.2vw, 34px); }
+  .tiles.top .label { color:var(--ink2); font-size:14px; }
+  /* Остальные показатели — разделы, свёрнутые под заголовком. */
+  .sections { padding:0; }
+  .sections details { margin:0; }
+  .sections details + details { border-top:1px solid var(--line); }
+  .sections summary { list-style:none; display:flex; align-items:center; gap:10px; padding:14px 16px; color:var(--ink); font-size:16px; font-weight:700; }
+  .sections summary::-webkit-details-marker { display:none; }
+  .sections summary .muted { font-weight:400; font-size:14px; }
+  .sections summary:hover { color:#00875c; }
+  .sections summary::after { content:""; margin-left:auto; flex:none; width:8px; height:8px; border-right:2px solid var(--muted); border-bottom:2px solid var(--muted); transform:rotate(-45deg); transition:transform .15s; }
+  .sections details[open] summary::after { transform:rotate(45deg); }
+  .sections .body { padding:0 16px 16px; }
   a { color:var(--brand); }
   /* Общее верхнее меню: четыре страницы проекта, текущая выделена. */
   .topbar { display:flex; justify-content:flex-start; align-items:center; gap:16px; flex-wrap:wrap; padding:10px 20px; background:#fff; border-bottom:1px solid #d6eadf; }
@@ -72,8 +87,19 @@
   <p class="lead" id="lead">Загружаем показатели…</p>
   <div class="note" id="simNote" hidden>Демо-данные. Какие переводы остановить, решал настоящий движок на синтетических переводах. Что дальше сделали клиенты и сотрудники банка (вернули деньги, настояли на переводе, сняли блокировку), смоделировано по заданным вероятностям. Ваши действия в демо добавляются к этим цифрам.</div>
 
-  <section class="group"><h2>Деньги</h2><div class="tiles" id="money"></div>
-    <p class="muted" style="margin:12px 0 0">«Не пришлось возмещать» — оценка. По закону о платежах банк возмещает клиенту перевод на счёт, который уже был в базе Антифрод-центра. Считаем переводы на такие счета, которые не ушли: остановленные системой, отклонённые по «чёрному» списку и отменённые в период охлаждения.</p></section>
+  <section class="group"><div class="tiles top" id="top"></div></section>
+
+  <section class="group sections">
+    <details><summary>Деньги и возвраты <span class="muted" id="nMoney"></span></summary><div class="body">
+      <div class="tiles" id="money"></div>
+      <p class="muted" style="margin:12px 0 0">«Не пришлось возмещать» — оценка. По закону о платежах банк возмещает клиенту перевод на счёт, который уже был в базе Антифрод-центра. Считаем переводы на такие счета, которые не ушли: остановленные системой, отклонённые по «чёрному» списку и отменённые в период охлаждения.</p></div></details>
+    <details><summary>Предупреждения и защиты <span class="muted" id="nPrevent"></span></summary><div class="body">
+      <p class="muted" style="margin:0 0 10px">Только действия в демо: в смоделированной истории периода охлаждения, кредитов, счетов ИП, наличных, QR-кодов и проверок сообщений нет.</p>
+      <div class="tiles" id="prevent"></div></div></details>
+    <details><summary>Нагрузка на сотрудников <span class="muted" id="nLoad"></span></summary><div class="body"><div class="tiles" id="load"></div></div></details>
+    <details><summary>Ошибки системы <span class="muted" id="nErrors"></span></summary><div class="body"><div class="tiles" id="errors"></div></div></details>
+    <details><summary>Жалобы и апелляции <span class="muted" id="nAppeals"></span></summary><div class="body"><div class="tiles" id="appeals"></div></div></details>
+  </section>
 
   <section class="group">
     <h2>Сохранено по дням, ₸</h2>
@@ -82,12 +108,6 @@
     <details><summary>Показать таблицей</summary><div class="scroll" id="dayTable"></div></details>
   </section>
 
-  <section class="group"><h2>Профилактика</h2>
-    <p class="muted">Только действия в демо: в смоделированной истории периода охлаждения, кредитов, счетов ИП и проверок сообщений нет.</p>
-    <div class="tiles" id="prevent"></div></section>
-  <section class="group"><h2>Нагрузка на сотрудников</h2><div class="tiles" id="load"></div></section>
-  <section class="group"><h2>Ошибки системы</h2><div class="tiles" id="errors"></div></section>
-  <section class="group"><h2>Жалобы и апелляции</h2><div class="tiles" id="appeals"></div></section>
   <section class="group" id="rules"><h2>Признаки и решения сотрудников</h2>
     <p class="lead" style="margin:0">Когда клиент настаивает на переводе, решает сотрудник. Если по какому-то признаку сотрудники часто разрешают перевод, остановка по нему чаще бывает лишней — его вес стоит проверить на странице качества. Система учится на решениях людей, но правила сама не меняет.</p>
     <div class="scroll" id="rulesTable" style="margin-top:10px"></div>
@@ -168,7 +188,14 @@ function drawBars(host, data) {
   const r = await fetch('/analyst/metrics');
   if (r.status === 401) { location.href = '/analyst?next=stats'; return; }
   const m = await r.json();
+  const q = await fetch('/quality.json', {cache: 'no-cache'}).then(x => x.ok ? x.json() : null).catch(() => null);
+  const cur = q ? q.curve.find(c => c.threshold === q.threshold) : null;
   $('simNote').hidden = !m.simulated_history;
+  $('top').innerHTML =
+    tile('Сохранено от мошенников', compact(m.saved_amount), 'остановленные переводы, которые не ушли получателю') +
+    tile('Не пришлось возмещать', compact(m.compensation_avoided), 'оценка: не ушли переводы на счета из базы Антифрод-центра') +
+    tile('Клиенты решили сами', pct(m.self_resolved_share), 'вернули деньги или отменили перевод без сотрудника банка') +
+    tile('Честных переводов останавливается зря', cur ? cur.false_rate[1].toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '%' : '—', 'на синтетических данных, страница «Качество движка»');
   $('lead').textContent = `Система остановила ${num(m.stops)} переводов, по ${num(m.kept_count)} из них деньги не ушли получателю.` +
     (m.self_resolved_share > 50 ? ` ${pct(m.self_resolved_share)} остановок клиенты закрыли сами, без сотрудника банка.` : '');
   $('money').innerHTML =
@@ -208,12 +235,15 @@ function drawBars(host, data) {
     tile('Время ответа на апелляцию', hrs(m.appeal_hours_median), `медиана по ${num(m.appeals_decided)} апелляциям; в срок 3 дня: ${pct(m.appeals_in_time_share)}`) +
     tile('Ограничения сняты', pct(m.unblocked_share), `из ${num(m.appeals_decided)} рассмотренных: клиент оказался невольным участником`) +
     tile('Справок выдано', num(m.clearances), 'о снятии ограничений, с проверкой подлинности по коду');
+  const count = id => $(id).querySelectorAll('.tile').length;
+  [['nMoney', 'money'], ['nPrevent', 'prevent'], ['nLoad', 'load'], ['nErrors', 'errors'], ['nAppeals', 'appeals']]
+    .forEach(([n, id]) => $(n).textContent = count(id));
   const draw = () => drawBars($('chart'), m.per_day);
   draw(); let t; addEventListener('resize', () => { clearTimeout(t); t = setTimeout(draw, 150); });
   $('dayTable').innerHTML = '<table><tr><th>День</th><th class="num">Остановлено</th><th class="num">Сохранено</th></tr>' +
     m.per_day.slice().reverse().map(d => `<tr><td>${d.day.slice(8, 10)}.${d.day.slice(5, 7)}</td><td class="num">${d.stops}</td><td class="num">${money(d.saved)}</td></tr>`).join('') + '</table>';
   checkJournal();
-  setupCalc(m);
+  setupCalc(m, q);
   const rf = m.rule_feedback || [];
   $('rulesTable').innerHTML = rf.length ? '<table><tr><th>Признак</th><th class="num">Решил сотрудник</th><th class="num">Разрешил перевод</th></tr>' +
     rf.map(r => `<tr><td>${r.text.replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]))}
@@ -223,8 +253,7 @@ function drawBars(host, data) {
 })();
 
 // Калькулятор: сколько денег сохранит система и сколько работы останется сотрудникам.
-async function setupCalc(m) {
-  const q = await fetch('/quality.json', {cache: 'no-cache'}).then(r => r.ok ? r.json() : null).catch(() => null);
+function setupCalc(m, q) {
   const cur = q ? q.curve.find(c => c.threshold === q.threshold) : null;
   const recall = cur ? cur.recall[1] / 100 : 0.88, falseRate = cur ? cur.false_rate[1] / 100 : 0.002;
   const self = (m.self_resolved_share ?? 60) / 100, kept = m.stops ? m.kept_count / m.stops : 0.6;

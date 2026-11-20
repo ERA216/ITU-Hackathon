@@ -175,6 +175,23 @@
   .row .body { flex:1; min-width:0; }
   .row .body .tag { margin-top:4px; }
   .pane-title { font-size:22px; font-weight:700; margin:2px 0 14px; }
+  /* Вкладки «Переводы» и «Защита» — аккордеон: открыта одна карточка, у остальных видны заголовок и строка о том, что внутри. */
+  .acc { background:#fff; border:1px solid #d6eadf; border-radius:16px; margin-bottom:12px; }
+  .acc:not(:has(> .acc-item > .card:not([hidden]))) { display:none; }
+  .acc-item + .acc-item { border-top:1px solid var(--line); }
+  .acc-item:has(> .card[hidden]) { display:none; }
+  .acc-item:has(> .card[hidden]) + .acc-item { border-top:0; }
+  .acc-head { display:flex; align-items:center; gap:12px; background:none; border-radius:16px; padding:14px 16px; text-align:left; color:var(--ink); font-weight:400; }
+  .acc-head > span { flex:1; min-width:0; }
+  .acc-head b { display:block; font-size:16px; font-weight:700; }
+  .acc-head .muted { display:block; font-size:13px; margin-top:2px; }
+  .acc-head:hover b { color:var(--brand-ink); }
+  .acc-head::after { content:""; flex:none; width:8px; height:8px; margin-right:4px; border-right:2px solid var(--muted); border-bottom:2px solid var(--muted); transform:rotate(-45deg); transition:transform .15s; }
+  .acc-item.open > .acc-head::after { transform:rotate(45deg); }
+  .acc-item:not(.open) > .card { display:none; }
+  .acc .card { background:none; border:0; border-radius:0; margin:0; padding:0 16px 16px; }
+  .acc .card > h2:first-child { display:none; }
+  .acc .card > h2:first-child + * { margin-top:0; }
   @media (max-width:860px) {
     body { background:var(--bg); }
     .app { display:block; padding:0; }
@@ -285,7 +302,11 @@
       </section>
 
       <section data-pane="pay" hidden>
-        <div class="pane-title" data-t="transferH"></div>
+        <div class="pane-title" data-t="tabPay"></div>
+        <div class="card muted" id="payBlocked" data-t="payBlocked" hidden></div>
+        <div class="acc">
+        <div class="acc-item open">
+        <button class="acc-head" aria-expanded="true"><span><b data-t="transferH"></b><span class="muted" data-t="accTransfer"></span></span></button>
         <div class="card" id="transferCard">
           <label for="to" data-t="to" style="margin-top:0"></label>
           <select id="to"></select>
@@ -294,7 +315,9 @@
           <input id="amount" type="number" min="1" step="1" inputmode="numeric" placeholder="0">
           <button class="primary" id="send" data-t="send"></button>
         </div>
-        <div class="card muted" id="payBlocked" data-t="payBlocked" hidden></div>
+        </div>
+        <div class="acc-item">
+        <button class="acc-head" aria-expanded="false"><span><b data-t="qrH"></b><span class="muted" data-t="accQr"></span></span></button>
         <div class="card" id="qrCard">
           <h2 data-t="qrH"></h2>
           <p class="muted" data-t="qrAbout" style="margin-top:0"></p>
@@ -306,6 +329,9 @@
           </div>
           <div id="qrResult"></div>
         </div>
+        </div>
+        <div class="acc-item">
+        <button class="acc-head" aria-expanded="false"><span><b data-t="cashH"></b><span class="muted" data-t="accCash"></span></span></button>
         <div class="card" id="cashCard">
           <h2 data-t="cashH"></h2>
           <p class="muted" data-t="cashAbout" style="margin-top:0"></p>
@@ -314,11 +340,19 @@
           <button class="primary" id="cashScan" data-t="cashScan"></button>
           <div id="cashState" style="margin-top:12px"></div>
         </div>
+        </div>
+        </div>
       </section>
 
       <section data-pane="safe" hidden>
         <div class="pane-title" data-t="tabSafe"></div>
+        <div class="acc">
+        <div class="acc-item open">
+        <button class="acc-head" aria-expanded="true"><span><b data-t="safeH"></b><span class="muted" data-t="accSafe"></span></span></button>
         <div class="card" id="safeCard"></div>
+        </div>
+        <div class="acc-item">
+        <button class="acc-head" aria-expanded="false"><span><b data-t="msgH"></b><span class="muted" data-t="accMsg"></span></span></button>
         <div class="card" id="msgCard">
           <h2 data-t="msgH"></h2>
           <label for="msgText" data-t="msgLabel" style="margin-top:0"></label>
@@ -326,10 +360,24 @@
           <button class="primary" id="msgCheck" data-t="msgCheck"></button>
           <div id="msgResult"></div>
         </div>
+        </div>
+        <div class="acc-item">
+        <button class="acc-head" aria-expanded="false"><span><b data-t="trH"></b><span class="muted" data-t="accTrainer"></span></span></button>
         <div class="card" id="trainerCard"></div>
+        </div>
+        <div class="acc-item">
+        <button class="acc-head" aria-expanded="false"><span><b data-t="guardianH"></b><span class="muted" data-t="accGuard"></span></span></button>
         <div class="card guardian" id="guardianCard"></div>
+        </div>
+        <div class="acc-item">
+        <button class="acc-head" aria-expanded="false"><span><b data-t="srH"></b><span class="muted" data-t="accSelf"></span></span></button>
         <div class="card" id="selfCard" hidden></div>
+        </div>
+        <div class="acc-item">
+        <button class="acc-head" aria-expanded="false"><span><b data-t="accessH"></b><span class="muted" data-t="accAccess"></span></span></button>
         <div class="card" id="accessCard"></div>
+        </div>
+        </div>
       </section>
     </div>
 
@@ -706,6 +754,15 @@ const T = {
   srDoneH: ['Вы сообщили банку {d}', 'Сіз банкке {d} хабарладыңыз'],
   srDoneText: ['Подтверждение № {n}. Его можно распечатать и приложить к заявлению в полицию.', '№ {n} растау. Оны басып шығарып, полицияға арызға қоса беруге болады.'],
   srDocOpen: ['Открыть подтверждение', 'Растауды ашу'],
+  accTransfer: ['Кому и сколько, со «светофором» получателя', 'Кімге және қанша, алушының «бағдаршамымен»'],
+  accQr: ['Покажем, кто на самом деле получит деньги', 'Ақшаны шын мәнінде кім алатынын көрсетеміз'],
+  accCash: ['По QR-коду банкомата', 'Банкоматтың QR-коды арқылы'],
+  accSafe: ['Деньги, которые нельзя перевести по звонку', 'Қоңырау арқылы аударуға болмайтын ақша'],
+  accMsg: ['Похоже ли сообщение на схему мошенников', 'Хабарлама алаяқтар схемасына ұқсай ма'],
+  accTrainer: ['8 ситуаций с мошенниками и объяснением', 'Алаяқтармен 8 жағдай және түсіндірме'],
+  accGuard: ['Близкий человек, который может отменить перевод', 'Аударымды болдырмай алатын жақын адам'],
+  accSelf: ['Расскажите банку сами', 'Банкке өзіңіз айтыңыз'],
+  accAccess: ['Когда и зачем банк открывал ваш ИИН и телефон', 'Банк ЖСН мен телефоныңызды қашан және не үшін ашқаны'],
   qrH: ['Оплата по QR-коду', 'QR-код арқылы төлеу'],
   qrAbout: ['Перед оплатой покажем, кто на самом деле получит деньги. Мошенники клеят свой QR-код поверх настоящего на парковках и в кафе.',
             'Төлемес бұрын ақшаны шын мәнінде кім алатынын көрсетеміз. Алаяқтар тұрақтар мен кафелерде өз QR-кодын нағыз кодтың үстіне жапсырады.'],
@@ -814,14 +871,39 @@ const when = s => dateText(s);
 const ARROW_IN = '<svg class="i" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></svg>';
 const ARROW_OUT = '<svg class="i" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m6 11 6-6 6 6"/></svg>';
 
-// Вкладки внизу экрана: главная, переводы, защита.
+// Вкладки внизу экрана: главная, переводы, защита. Если нужна карточка из аккордеона, она раскрывается.
 function showTab(name, focus) {
   document.querySelectorAll('[data-pane]').forEach(p => p.hidden = p.dataset.pane !== name);
   document.querySelectorAll('.tabbar [data-go]').forEach(b => b.setAttribute('aria-current', String(b.dataset.go === name)));
-  const el = focus && $(focus);
-  if (el && !el.hidden) el.scrollIntoView({behavior: 'smooth', block: 'start'});
+  const el = focus && $(focus), item = el && el.closest('.acc-item');
+  if (item) openAcc(item);
+  if (el && !el.hidden) (item || el).scrollIntoView({behavior: 'smooth', block: 'start'});
   else $('screen').scrollTo({top: 0});
 }
+// Аккордеон на вкладках «Переводы» и «Защита»: открыта одна карточка, повторное нажатие её сворачивает.
+function openAcc(item, open = true) {
+  item.parentElement.querySelectorAll(':scope > .acc-item').forEach(x => {
+    const on = open && x === item;
+    x.classList.toggle('open', on);
+    x.querySelector('.acc-head').setAttribute('aria-expanded', String(on));
+  });
+}
+// После входа под персонажем раскрыта первая карточка, которая у него есть (у приостановленного счёта сейфа нет).
+let accFresh = true;
+function resetAcc() { accFresh = true; }
+function openFirstAcc() {
+  if (!accFresh) return;
+  accFresh = false;
+  document.querySelectorAll('.acc').forEach(a => {
+    const first = [...a.children].find(x => !x.querySelector(':scope > .card').hidden);
+    if (first) openAcc(first);
+  });
+}
+document.querySelectorAll('.acc-head').forEach(h => h.onclick = () => {
+  const item = h.parentElement, open = !item.classList.contains('open');
+  openAcc(item, open);
+  if (open) item.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+});
 document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => showTab(b.dataset.go, b.dataset.focus));
 $('demoToggle').onclick = () => $('demoPanel').classList.toggle('open');
 
@@ -989,6 +1071,7 @@ async function load() {
             <div class="amt ${incoming ? 'in' : ''}">${incoming ? '+' : '−'}${money(t.amount)}</div></div>`;
   }).join('') || `<div class="muted">${tr('noOps')}</div>`;
   $('feed').querySelectorAll('button[data-case]').forEach(b => b.onclick = async () => showStop(await api('/cases/' + b.dataset.case)));
+  openFirstAcc();
   $('feed').querySelectorAll('button[data-report]').forEach(b => b.onclick = () => askReport(b));
 }
 
@@ -1572,7 +1655,7 @@ function clearScreen() {
   $('coolAlerts').innerHTML = ''; $('loanCard').innerHTML = ''; $('rentalCard').innerHTML = ''; $('bizLine').textContent = ''; $('msgText').value = ''; $('msgResult').innerHTML = ''; clearTimeout(coolTimer);
   $('compCards').innerHTML = ''; $('selfCard').hidden = true; selfKey = ''; selfMsg = '';
   $('cashAlerts').innerHTML = ''; $('cashState').innerHTML = ''; $('cashAmount').value = ''; clearTimeout(cashTimer);
-  $('qrResult').innerHTML = ''; trainer = null; $('trainerCard').innerHTML = '';
+  $('qrResult').innerHTML = ''; trainer = null; $('trainerCard').innerHTML = ''; resetAcc();
   document.querySelectorAll('[data-sess]').forEach(b => { b.checked = false; });
 }
 $('who').onchange = async () => { clearScreen(); showTab('home'); await loginAs(+$('who').value); load(); loadTrainer(); };
