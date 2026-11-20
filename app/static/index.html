@@ -706,9 +706,15 @@ function applyStatic() {
   document.querySelectorAll('[data-lang]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.lang === L)));
 }
 
-async function api(path, body) {
-  const r = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {});
+async function api(path, body, retried) {
+  // Номер персонажа на этом экране: если в другой вкладке вошли под другим, сервер не выполнит действие от его имени.
+  const headers = me && path !== '/login' ? {'X-Client-Id': String(me)} : {};
+  const r = await fetch(path, body ? {method:'POST', headers:{...headers, 'Content-Type':'application/json'}, body:JSON.stringify(body)} : {headers});
   const data = await r.json().catch(() => ({}));
+  if (r.status === 409 && r.headers.get('X-Session-Changed') && !retried) {
+    await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role: 'client', client_id: me})});
+    return api(path, body, true);
+  }
   if (!r.ok) { const e = new Error(typeof data.detail === 'string' ? data.detail : tr('requestError')); e.status = r.status; throw e; }
   return data;
 }

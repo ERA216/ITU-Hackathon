@@ -235,7 +235,8 @@ async function setupCalc(m) {
     $('calcOut').innerHTML =
       tile('Сохранено денег клиентов', compact(saved * 12), `в год; в месяц ${compact(saved)}: остановлено ${num(Math.round(caught))} переводов дропперам из ${num(Math.round(drop))}`) +
       tile('Честных переводов остановлено зря', num(Math.round(falseStops)), `в месяц из ${num(Math.round(total))}; клиент сразу видит причину и может настоять на переводе`) +
-      tile('Работа сотрудников', `${num(Math.round(hours))} ч`, `в месяц: ${num(Math.round(cases))} ${plural(Math.round(cases), 'случай', 'случая', 'случаев')}, остальные клиенты закрыли сами; это около ${num(Math.max(1, Math.round(hours / 168)))} ${plural(Math.max(1, Math.round(hours / 168)), 'сотрудника', 'сотрудников', 'сотрудников')} на полный день`);
+      tile('Работа сотрудников', `${num(Math.round(hours))} ч`, `в месяц: ${num(Math.round(cases))} ${plural(Math.round(cases), 'случай', 'случая', 'случаев')}, остальные клиенты закрыли сами; ` +
+        (hours < 84 ? 'это меньше половины ставки одного сотрудника' : `это около ${num(Math.round(hours / 168))} ${plural(Math.round(hours / 168), 'сотрудника', 'сотрудников', 'сотрудников')} на полный день`));
   };
   document.querySelectorAll('.calc input').forEach(i => i.oninput = draw);
   draw();

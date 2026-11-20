@@ -2066,3 +2066,99 @@ def test_quality_json_has_speed_and_weights_for_tuning():
     cur = next(c for c in q["curve"] if c["threshold"] == q["threshold"])
     assert abs(100 * caught / scheme - cur["recall"][1]) < 1.5
     assert 'id="tune"' in TestClient(main.app).get("/quality").text
+
+
+# ---------- Исправления после проверки 20 ноября ----------
+
+def test_action_from_another_tab_is_not_made_on_behalf_of_another_persona():
+    c = client(STUDENT)                                                  # вкладка с Айданой
+    c.post("/login", json={"role": "client", "client_id": VICTIM})       # в другой вкладке вошли как Гульнар
+    before = main.conn.execute("SELECT COUNT(*) FROM transfers WHERE sender_id=?", (VICTIM,)).fetchone()[0]
+    r = c.post("/transfers", json={"receiver_id": MOM, "amount": 1000}, headers={"X-Client-Id": str(STUDENT)})
+    assert r.status_code == 409 and r.headers["x-session-changed"] == "1"
+    assert main.conn.execute("SELECT COUNT(*) FROM transfers WHERE sender_id=?", (VICTIM,)).fetchone()[0] == before
+    # Совпадает — работает; без номера (старые вызовы, тур) — как раньше.
+    assert c.get(f"/recipients/{MOM}/check", headers={"X-Client-Id": str(VICTIM)}).status_code == 200
+    assert c.get(f"/recipients/{MOM}/check").status_code == 200
+
+
+def test_decision_closes_the_waiting_release_request():
+    an, an2 = analyst(), analyst("medet")
+    case_id = next(c["case_id"] for c in an.get("/analyst/cases").json() if c["client_id"] == TRANSIT)
+    a = an.post(f"/analyst/cases/{case_id}/decision", json={"decision": "approve"}).json()["approval"]
+    card = an.post(f"/analyst/cases/{case_id}/decision", json={"decision": "reject", "comment": "Оставляем: счёт дропперский"}).json()
+    assert card["status"] == "kept" and card["approval"] is None
+    assert an.get("/analyst/approvals").json() == []
+    assert not next(c for c in an.get("/analyst/cases").json() if c["case_id"] == case_id)["second_key"]
+    assert an2.post(f"/analyst/approvals/{a['id']}/confirm").status_code == 409
+    assert "уже принято решение" in card["history"][-1]["text"]
+
+
+def test_refund_request_is_closed_when_the_client_returns_the_money_himself():
+    an = analyst()
+    block_seller()
+    drop = next(c["case_id"] for c in an.get("/analyst/cases").json() if c["client_id"] == DROP_CARD)
+    an.post(f"/analyst/cases/{drop}/refund")
+    assert client(DROP_CARD).post(f"/cases/{drop}/refund").json()["amount"] == 195000
+    assert an.get("/analyst/approvals").json() == [] and an.get(f"/analyst/cases/{drop}").json()["approval"] is None
+
+
+def test_stale_network_request_is_closed_on_confirm():
+    an, an2 = analyst(), analyst("medet")
+    key = next(n["key"] for n in an.get("/analyst/networks").json() if n["farms"])
+    a = an.post(f"/analyst/networks/{key}/suspend").json()["approval"]
+    for m in an.get(f"/analyst/networks/{key}").json()["members"]:
+        if m["phones"] and m["status"] == "active":
+            main.conn.execute("UPDATE clients SET status='blocked' WHERE id=?", (m["id"],))
+    main.conn.commit()
+    r = an2.post(f"/analyst/approvals/{a['id']}/confirm")
+    assert r.status_code == 409 and "Просьба закрыта" in r.json()["detail"]
+    assert an.get("/analyst/approvals").json() == []
+
+
+def test_network_key_is_its_drop_phone_and_survives_new_members():
+    an = analyst()
+    net = next(n for n in an.get("/analyst/networks").json() if n["farms"])
+    assert net["key"] == "drop-3f9c"
+    main.conn.execute("INSERT INTO afc_list(client_id,list,added_at,note) VALUES(5,'grey',?,'тест')", (main._now().isoformat(),))
+    main.conn.execute("INSERT INTO transfers(sender_id,receiver_id,amount,created_at,status) VALUES(5,?,1000,?,'done')",
+                      (DROP_CARD, main._now().isoformat()))
+    main.conn.commit()
+    again = an.get("/analyst/networks/drop-3f9c").json()
+    assert again["accounts"] > net["accounts"] and 5 in {m["id"] for m in again["members"]}
+
+
+def test_safe_does_not_block_returning_money_to_the_sender():
+    st = client(STUDENT)
+    assert st.post("/safe/lock", json={"amount": account(st, STUDENT)["balance"]}).status_code == 200
+    tid = feed_item(st, STUDENT, STRANGER)["id"]
+    assert st.post(f"/incoming/{tid}/return").json()["status"] == "returned"
+    acc = account(st, STUDENT)
+    assert acc["safe"]["amount"] == acc["balance"] == 42000                  # сейф уменьшился вместе со счётом
+    main.conn.execute("UPDATE clients SET balance = balance + 100000 WHERE id=?", (STUDENT,))
+    main.conn.commit()
+    assert account(st, STUDENT)["safe"]["amount"] == 42000                   # и сам обратно не вырос
+
+
+def test_branch_unlock_caps_the_waiting_request():
+    mom = client(MOM)
+    mom.post("/safe/unlock", json={"amount": 1500000, "way": "delay"})
+    v = mom.post("/safe/unlock", json={"amount": 1000000, "way": "branch"}).json()
+    assert (v["amount"], v["unlock_amount"]) == (500000, 500000)
+    v = mom.post("/safe/unlock", json={"amount": 500000, "way": "branch"}).json()
+    assert (v["amount"], v["unlock_amount"], v["unlock_at"]) == (0, None, None)
+
+
+def test_identity_claim_on_a_suspended_account_extends_the_same_case():
+    an = analyst()
+    key = next(n["key"] for n in an.get("/analyst/networks").json() if n["farms"])
+    second_key(an.post(f"/analyst/networks/{key}/suspend").json())
+    client(VENERA).post(f"/accounts/{VENERA_2}/claim", json={"answer": "not_me"})
+    cases = [c for c in an.get("/analyst/cases").json() if c["client_id"] == VENERA_2]
+    assert len(cases) == 1 and cases[0]["needs_decision"]
+    card = an.get(f"/analyst/cases/{cases[0]['case_id']}").json()
+    assert [r["code"] for r in card["reasons"]] == ["identity_theft", "network"] and card["frozen"] == 115000
+
+
+def test_no_personal_data_for_another_bank_client():
+    assert analyst().post(f"/analyst/clients/{BANK_CARD}/pii", json={"reason": "contact"}).status_code == 404

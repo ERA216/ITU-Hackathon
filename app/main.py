@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from html import escape
 from urllib.parse import quote
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response as RawResponse
 from pydantic import BaseModel, Field
@@ -255,9 +255,13 @@ def session(ca_client: str | None = Cookie(None), ca_analyst: str | None = Cooki
     return s
 
 
-def as_client(s: dict = Depends(session)) -> dict:
+def as_client(s: dict = Depends(session), x_client_id: str | None = Header(None)) -> dict:
     if not s["client"]:
         raise HTTPException(401, t("login_client"))
+    # Вход клиента общий на весь браузер. Экран сообщает, какой персонаж на нём открыт: если в другой вкладке
+    # вошли под другим, действие не выполняется от чужого имени — экран входит заново и повторяет запрос.
+    if x_client_id and x_client_id != str(s["client"]["client_id"]):
+        raise HTTPException(409, t("session_changed"), headers={"X-Session-Changed": "1"})
     return s["client"]
 
 
@@ -436,6 +440,20 @@ def _limited_since(cid: int) -> str | None:
 def _move(sender_id: int, receiver_id: int, amount: int):
     conn.execute("UPDATE clients SET balance = balance - ? WHERE id=?", (amount, sender_id))
     conn.execute("UPDATE clients SET balance = balance + ? WHERE id=?", (amount, receiver_id))
+    _trim_safe(sender_id)
+
+
+def _trim_safe(cid: int):
+    """В сейфе не больше, чем на счёте: если деньги ушли (например, возврат отправителю), сейф уменьшается
+    и потом сам не «вырастает» обратно за счёт новых поступлений."""
+    conn.execute("""UPDATE safes SET amount = MIN(amount, MAX(0, (SELECT balance FROM clients WHERE id=?)))
+                    WHERE client_id=?""", (cid, cid))
+
+
+def _spendable_for_return(cid: int) -> int:
+    """Сколько можно вернуть отправителю или банку. Деньги в сейфе этому не мешают: вернуть отправителю
+    (в пределах присланного) или погасить кредит — безопасно, сейф защищает от переводов мошенникам."""
+    return max(0, _available(cid) + _safe_sum(cid))
 
 
 @app.get("/clients/{cid}")
@@ -658,7 +676,7 @@ def _return_incoming(client: dict, inc) -> dict:
         conn.execute("UPDATE transfers SET status='cancelled' WHERE id=?", (case["transfer_id"],))
         conn.execute("UPDATE cases SET status='returned' WHERE id=?", (case["id"],))
     amount = inc["amount"] - _returned_sum(inc["id"])      # часть могли уже вернуть пострадавшему по жалобе
-    available = max(0, _available(cid))
+    available = _spendable_for_return(cid)
     if available < amount:
         raise HTTPException(400, t("return_no_funds", available=_money(available), amount=_money(amount)))
     cur = conn.execute(
@@ -1007,7 +1025,11 @@ def _refund(case, actor: str, employee: str | None = None) -> dict:
 @app.post("/cases/{case_id}/refund")
 def refund_by_client(case_id: int, s: dict = Depends(as_client)):
     """Клиент сам возвращает пострадавшему замороженные деньги, не дожидаясь решения банка."""
-    return _refund(_own_case(s, case_id, "block"), f"client:{s['client_id']}")
+    case = _own_case(s, case_id, "block")
+    r = _refund(case, f"client:{s['client_id']}")
+    if not _refundable(conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()):
+        _close_approvals(("refund",), case_id, "клиент вернул деньги сам")
+    return r
 
 
 @app.post("/analyst/cases/{case_id}/refund")
@@ -1015,7 +1037,7 @@ def refund_by_analyst(case_id: int, s: dict = Depends(as_analyst)):
     """Сотрудник возвращает пострадавшему деньги, замороженные на счёте из цепочки.
 
     В банке для этого нужно основание: согласие владельца счёта либо решение суда или органа
-    уголовного преследования. В демо это одна кнопка.
+    уголовного преследования. От TWO_KEY_REFUND возврат подтверждает второй сотрудник.
     """
     case = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
     if not case:
@@ -1028,6 +1050,8 @@ def refund_by_analyst(case_id: int, s: dict = Depends(as_analyst)):
         _ask_second_key("refund", case_id, f"Вернуть пострадавшему {_money(amount)}", {}, s, case_id)
         return _analyst_case(case_id)
     _refund(case, "analyst", s["name"])
+    if not _refundable(conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()):
+        _close_approvals(("refund",), case_id, "возвращать уже нечего")
     return _analyst_case(case_id)
 
 
@@ -1579,8 +1603,13 @@ def safe_unlock(body: SafeUnlockIn, s: dict = Depends(as_client)):
         raise HTTPException(400, t("safe_too_much", m=_money(_safe_sum(cid))))
     now = _now()
     if body.way == "branch":
-        conn.execute("UPDATE safes SET amount = amount - ?, updated_at=? WHERE client_id=?",
-                     (body.amount, now.isoformat(), cid))
+        # Просьба «через сутки» не может быть больше того, что осталось в сейфе; ничего не осталось — просьбы нет.
+        conn.execute("""UPDATE safes SET amount = amount - ?, updated_at=?,
+                          unlock_amount = CASE WHEN amount - ? > 0 THEN MIN(unlock_amount, amount - ?) END,
+                          unlock_at = CASE WHEN amount - ? > 0 THEN unlock_at END,
+                          unlock_requested_at = CASE WHEN amount - ? > 0 THEN unlock_requested_at END
+                        WHERE client_id=?""",
+                     (body.amount, now.isoformat(), body.amount, body.amount, body.amount, body.amount, cid))
         log(f"client:{cid}", "safe_opened", None, None, amount=body.amount, way="branch")
     else:
         at = (now + timedelta(hours=SAFE_UNLOCK_HOURS)).isoformat()
@@ -1680,10 +1709,11 @@ def repay_loan(loan_id: int, s: dict = Depends(as_client)):
         conn.execute("UPDATE transfers SET status='cancelled' WHERE id=?", (case["transfer_id"],))
         conn.execute("UPDATE cases SET status='withdrawn' WHERE id=?", (case["id"],))
         log(f"client:{cid}", "withdrawn", case["id"], case["transfer_id"])
-    available = max(0, _available(cid))
+    available = _spendable_for_return(cid)
     if available < loan["amount"]:
         raise HTTPException(400, t("loan_no_funds", available=_money(available), amount=_money(loan["amount"])))
     conn.execute("UPDATE clients SET balance = balance - ? WHERE id=?", (loan["amount"], cid))
+    _trim_safe(cid)
     conn.execute("UPDATE loans SET repaid_at=? WHERE id=?", (_now().isoformat(), loan_id))
     for case in cases or [None]:
         log(f"client:{cid}", "loan_repaid", case["id"] if case else None, None, amount=loan["amount"])
@@ -1743,7 +1773,7 @@ def recruit_return_all(s: dict = Depends(as_client)):
     sig = _recruit_view(cid)
     if not sig:
         raise HTTPException(409, t("recruit_none"))
-    available = max(0, _available(cid))
+    available = _spendable_for_return(cid)
     if available < sig["amount"]:
         raise HTTPException(400, t("return_no_funds", available=_money(available), amount=_money(sig["amount"])))
     for tid in sig["incoming_ids"]:
@@ -2234,6 +2264,9 @@ def _decide(case, decision: str, comment: str, employee: str):
         status=status, comment=comment or None, role=role["label"], role_score=role["score"], employee=employee)
     if cleared:
         _issue_clearance(case)
+    _close_approvals(("release",), case_id, "по случаю уже принято решение")
+    if not _refundable(conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()):
+        _close_approvals(("refund",), case_id, "возвращать уже нечего")
 
 
 @app.get("/quality", include_in_schema=False)
@@ -2364,6 +2397,16 @@ def _ask_second_key(kind: str, target, summary: str, params: dict, s: dict, case
     return aid
 
 
+def _close_approvals(kinds: tuple, target, why: str):
+    """Просьба больше неактуальна (решение уже принято, возвращать нечего): закрываем её, чтобы не висела."""
+    for a in conn.execute(f"""SELECT * FROM approvals WHERE status='pending' AND target=?
+                              AND kind IN ({",".join("?" * len(kinds))})""", (str(target), *kinds)).fetchall():
+        conn.execute("UPDATE approvals SET status='rejected', decided_by='Система', decided_at=? WHERE id=?",
+                     (_now().isoformat(), a["id"]))
+        log("system", "approval_rejected", int(target) if a["kind"] in ("refund", "release") else None, None,
+            text=f"{a['summary']}: просьба закрыта, {why}")
+
+
 def _approval(aid: int):
     a = conn.execute("SELECT * FROM approvals WHERE id=?", (aid,)).fetchone()
     if not a:
@@ -2387,17 +2430,26 @@ def approval_confirm(aid: int, s: dict = Depends(as_analyst)):
         raise HTTPException(409, "Подтвердить должен другой сотрудник: правило двух ключей")
     params = json.loads(a["params"] or "{}")
     case_id = int(a["target"]) if a["kind"] in ("refund", "release") else None
-    if a["kind"] == "refund":
-        _refund(conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone(), "analyst", s["name"])
-    elif a["kind"] == "release":
-        case = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
-        if not _pending(case):
-            raise HTTPException(409, "По этому случаю решение уже принято")
-        _decide(case, "approve", params.get("comment", ""), s["name"])
-    else:
-        _suspend_network(a["target"])
+    # Сначала просьба выполнена — тогда само действие не закроет её как «неактуальную».
     conn.execute("UPDATE approvals SET status='done', decided_by=?, decided_at=? WHERE id=?",
                  (s["name"], _now().isoformat(), aid))
+    try:
+        if a["kind"] == "refund":
+            _refund(conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone(), "analyst", s["name"])
+        elif a["kind"] == "release":
+            case = conn.execute("SELECT * FROM cases WHERE id=?", (case_id,)).fetchone()
+            if not _pending(case):
+                raise HTTPException(409, "По этому случаю решение уже принято")
+            _decide(case, "approve", params.get("comment", ""), s["name"])
+        else:
+            _suspend_network(a["target"])
+    except HTTPException as e:
+        # Пока просьба ждала, действие стало невозможным. Проверки идут до изменений, поэтому откатывать
+        # нечего: просьбу закрываем и сохраняем это (JSONResponse, а не исключение — иначе откатилось бы и закрытие).
+        why = str(e.detail).rstrip(".")
+        conn.execute("UPDATE approvals SET status='rejected', decided_by='Система' WHERE id=?", (aid,))
+        log("system", "approval_rejected", case_id, None, text=f"{a['summary']}: просьба закрыта, действие уже неактуально ({why})")
+        return JSONResponse({"detail": f"Действие уже неактуально: {why}. Просьба закрыта."}, status_code=409)
     log("analyst", "approval_confirmed", case_id, None, employee=s["name"], requested_by=a["requested_by"],
         text=f"{a['summary']}: подтвердил второй сотрудник ({s['name']}, запросил(а) {a['requested_by']})")
     return {"approval": _approval_view(conn.execute("SELECT * FROM approvals WHERE id=?", (aid,)).fetchone()),
@@ -2453,7 +2505,8 @@ def _pii_log(cid: int, limit: int = 5) -> list[dict]:
 @app.post("/analyst/clients/{cid}/pii")
 def open_pii(cid: int, body: PiiIn, s: dict = Depends(as_analyst)):
     """Открыть ИИН и телефон клиента. Без причины нельзя; причина и сотрудник остаются в журнале."""
-    _client(cid)
+    if _client(cid)["kind"] == "external":
+        raise HTTPException(404, "Это счёт в другом банке: персональных данных его владельца у нас нет")
     if body.reason not in PII_REASONS or body.reason == "afc":
         raise HTTPException(400, "Укажите причину: " + ", ".join(v.lower() for k, v in PII_REASONS.items() if k != "afc"))
     return _open_pii(cid, s["name"], body.reason) | {"log": _pii_log(cid)}
@@ -2556,13 +2609,25 @@ def claim_account(aid: int, body: ClaimIn, s: dict = Depends(as_client)):
                         "(счёт открыт удалённо, с чужого устройства)"}]
     inc = conn.execute("SELECT id FROM transfers WHERE receiver_id=? ORDER BY created_at DESC, id DESC LIMIT 1",
                        (aid,)).fetchone()
-    case_id = conn.execute(
-        """INSERT INTO cases(client_id,transfer_id,incoming_transfer_id,kind,score,reasons,status,explanation,
-                             submitted_at,due_at,created_at,scope,frozen)
-           VALUES(?,NULL,?,'block',0,?,'under_review',?,?,?,?,'full',?)""",
-        (aid, inc["id"] if inc else None, json.dumps(reasons, ensure_ascii=False),
-         f"Владелец ({i18n.name(cid, _client(cid)['name']).split(' (')[0]}) сообщил в приложении, что не открывал счёт",
-         now.isoformat(), (now + timedelta(days=APPEAL_SLA_DAYS)).isoformat(), now.isoformat(), frozen)).lastrowid
+    explanation = f"Владелец ({i18n.name(cid, _client(cid)['name']).split(' (')[0]}) сообщил в приложении, что не открывал счёт"
+    due = (now + timedelta(days=APPEAL_SLA_DAYS)).isoformat()
+    old = conn.execute(f"""SELECT * FROM cases WHERE client_id=? AND kind='block'
+                           AND status IN ({",".join("?" * len(UNRESOLVED))}) ORDER BY id LIMIT 1""",
+                       (aid, *UNRESOLVED)).fetchone()
+    if old:
+        # Счёт уже приостановлен (например, через сеть дропперов): дополняем тот же случай, а не заводим второй.
+        case_id = old["id"]
+        conn.execute("""UPDATE cases SET reasons=?, status='under_review', scope='full', explanation=?, submitted_at=?,
+                        due_at=?, frozen=? WHERE id=?""",
+                     (json.dumps(reasons + json.loads(old["reasons"]), ensure_ascii=False), explanation,
+                      now.isoformat(), due, frozen, case_id))
+    else:
+        case_id = conn.execute(
+            """INSERT INTO cases(client_id,transfer_id,incoming_transfer_id,kind,score,reasons,status,explanation,
+                                 submitted_at,due_at,created_at,scope,frozen)
+               VALUES(?,NULL,?,'block',0,?,'under_review',?,?,?,?,'full',?)""",
+            (aid, inc["id"] if inc else None, json.dumps(reasons, ensure_ascii=False), explanation,
+             now.isoformat(), due, now.isoformat(), frozen)).lastrowid
     _refresh_status(aid)
     conn.execute("INSERT INTO account_claims(account_id,owner_id,answer,code,case_id,at) VALUES(?,?,?,?,?,?)",
                  (aid, cid, "not_me", code, case_id, now.isoformat()))
@@ -2599,7 +2664,8 @@ def identity_claim_page(cid: int, aid: int, request: Request, s: dict = Depends(
 
 # ---------- Сети дропперов и дроп-фермы ----------
 # Сеть — счета, связанные общим «дроп-телефоном» или переводами между подозрительными счетами (metrics.networks).
-# Сотрудник видит её целиком: телефоны, счета, граф денег, и одной кнопкой приостанавливает счета на дроп-телефонах.
+# Сотрудник видит её целиком: телефоны, счета, граф денег, и приостанавливает счета на дроп-телефонах
+# (подтверждает второй сотрудник).
 
 def _network(key: str) -> dict:
     found = next((n for n in metrics.networks(conn, _now()) if n["key"] == key), None)

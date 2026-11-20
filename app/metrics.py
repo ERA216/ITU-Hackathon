@@ -169,8 +169,10 @@ def networks(conn, now: datetime) -> list[dict]:
     for members in groups.values():
         if len(members) < NET_MIN:
             continue
-        out.append({"key": f"n{min(members)}", "members": sorted(members),
-                    "farms": [f for f in farms if f["accounts"][0] in members]})
+        mine = [f for f in farms if f["accounts"][0] in members]
+        # Ключ сети — её дроп-телефон: он не меняется, когда в сеть попадают новые счета. Без телефонов — наименьший номер.
+        key = min(f["device_id"] for f in mine) if mine else f"n{min(members)}"
+        out.append({"key": key, "members": sorted(members), "farms": mine})
     return sorted(out, key=lambda n: -len(n["members"]))
 
 

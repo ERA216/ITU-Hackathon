@@ -36,7 +36,7 @@
 ```bash
 pip install -r requirements.txt
 uvicorn app.main:app --reload          # http://127.0.0.1:8000/ (стартовая), /client (клиент), /analyst (код 2026), /analyst/stats, /quality
-python -m pytest -q                    # 139 тестов, ~80–110 с; каждый тест на своей копии базы (на Windows 1 пропускается)
+python -m pytest -q                    # 148 тестов, ~90–110 с; каждый тест на своей копии базы (на Windows 1 пропускается)
 python -m app.quality                  # пересчитать app/static/quality.json (10 наборов + ИП, казино, устройства; ~6–8 минут)
 ```
 
@@ -56,7 +56,7 @@ python -m app.quality                  # пересчитать app/static/quali
 - `app/db.py` — схема SQLite; `SCHEMA_VERSION` (сейчас 14): старая база удаляется и создаётся заново.
 - Страницы: `/` — `landing.html` (стартовая), `/client` — `index.html` (экран клиента), `/analyst`, `/analyst/stats`, `/quality`. `tour.js` («Показ за 3 минуты») подключён на стартовой, клиенте, панели и эффективности; шаги — массив `STEPS`, шаг хранится в `sessionStorage` (`ca_tour`); в панели `showPanel()` вызывает `tourResume()`.
 - Журнал действий: `app/journal.py` — `seal()` (отпечаток новых записей, вызывается из `log()` и в конце `seed.populate`), `verify()`. Любую новую прямую вставку в `events` тоже запечатывать. Проверка — `/analyst/journal`, демо-подделка — `/demo/journal/tamper`, блок внизу `stats.html`.
-- Сотрудники: `EMPLOYEES` в `main.py` (Аружан С., Медет К.), выбираются при входе, в демо переключаются `/analyst/employee`. Правило двух ключей — таблица `approvals`, `_ask_second_key`, `/analyst/approvals/{id}/confirm|reject`; действия — `_refund`, `_decide`, `_suspend_network`.
+- Сотрудники: `EMPLOYEES` в `main.py` (Аружан С., Медет К.), выбираются при входе, в демо переключаются `/analyst/employee`. Правило двух ключей — таблица `approvals`, `_ask_second_key`, `/analyst/approvals/{id}/confirm|reject`, `_close_approvals`; действия — `_refund`, `_decide`, `_suspend_network`. Ключ сети — её дроп-телефон (`metrics.networks`), без телефонов — `n<номер>`.
 - Скрытые данные: `_pii` (в демо ИИН и телефон получаются из номера клиента), `_pii_masked`, `/analyst/clients/{id}/pii` с причиной; журнал просмотров — таблица `data_access`, клиенту — `data_access` в ленте.
 - «Светофор получателя»: `_recipient_risk` в `main.py`, поле `risk` в `/recipients/{id}/check`; на экране — `#recipientNote`. Заявление в полицию — `/clients/{cid}/police-statement/{pid}`, номер обращения `Ж-ГГГГ-NNNNN`.
 - Страница «Эффективность»: калькулятор эффекта (`setupCalc`), «Признаки и решения сотрудников» (`metrics._rule_feedback`), журнал. Страница качества: настройка весов (`tuning` в `quality.json`: веса, тексты, сочетания признаков) и скорость (`speed`). `seed.populate` собирает их в `stats["codes"]`, `stats["eval_ms"]`; прежний `stats["scored"]` не менять — по нему сверяются цифры качества.
@@ -94,6 +94,9 @@ python -m app.quality                  # пересчитать app/static/quali
 - Тесты ставят `CA_DEMO_HISTORY=0` и `CA_ANALYST_PIN=4321`.
 - Файлы в репозитории с окончаниями строк CRLF: правки сохранять так же. `sed -i` в Git Bash превращает CRLF в LF — править через Edit или Python.
 - Отказ, после которого нужна запись в журнале, возвращать `JSONResponse(...)`, а не `HTTPException`: исключение откатывает всю транзакцию запроса.
+- Вход клиента — одна кука на весь браузер. Экран клиента шлёт `X-Client-Id` (в `api()` в `index.html`), `as_client` при несовпадении отвечает 409 с `X-Session-Changed`. Новые запросы экрана клиента делать через `api()`, а не голый `fetch`.
+- Просьбы второго ключа должны закрываться, когда действие стало неактуальным: `_close_approvals(...)`. Новое действие под второй ключ — проверки до изменений, иначе закрытие в `approval_confirm` оставит половину изменений.
+- Деньги со счёта списывать через `_move` (он же уменьшает сейф до остатка, `_trim_safe`); если баланс меняется напрямую (кредит), вызвать `_trim_safe` самому.
 
 ## Что осталось
 
