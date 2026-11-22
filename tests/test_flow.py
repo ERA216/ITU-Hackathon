@@ -2421,6 +2421,16 @@ def test_demo_is_reset_after_it_was_changed_and_nobody_came_for_half_an_hour():
     assert main._refresh_reason() is None
 
 
+def test_uptime_pings_do_not_count_as_visitors():
+    main._activity["last"] = 0
+    anon = TestClient(main.app)
+    anon.head("/")                                                             # «будильник» хостинга
+    anon.get("/")                                                              # проверка здоровья без входа
+    assert main._activity["last"] == 0
+    client(STUDENT).get(f"/clients/{STUDENT}")                                 # настоящий посетитель
+    assert main._activity["last"] > 0
+
+
 def test_idle_reset_is_skipped_if_a_visitor_came_while_data_was_built(monkeypatch):
     st = client(STUDENT)
     send(st, MOM, 1000)

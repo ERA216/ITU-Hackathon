@@ -847,8 +847,9 @@ const T = {
 };
 const cookieLang = (document.cookie.match(/(?:^|; )ca_lang=(ru|kk)/) || [])[1];
 let L = cookieLang || 'ru';
-// Имя с инициалом («Алия О.») в конце фразы не даёт двойной точки.
-const tr = (key, vars = {}) => T[key][L === 'kk' ? 1 : 0].replace(/\{(\w+)\}/g, (_, k) => vars[k]).replace(/(?<!\.)\.\.(?!\.)/g, '.');
+// Имя с инициалом («Алия О.») в конце фразы не даёт двойной точки. Без ретроспективной проверки в регулярном
+// выражении: её нет в Safari до iOS 16.4, и там весь экран клиента не запускался бы.
+const tr = (key, vars = {}) => T[key][L === 'kk' ? 1 : 0].replace(/\{(\w+)\}/g, (_, k) => vars[k]).replace(/\.{2,}/g, m => m.length === 2 ? '.' : m);
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
@@ -934,7 +935,17 @@ function openAcc(item, open = true) {
 // После входа под персонажем раскрыта первая карточка, которая у него есть (у приостановленного счёта сейфа нет).
 let accFresh = true;
 function resetAcc() { accFresh = true; }
+// Скрытая карточка прячет и свой заголовок, пустой аккордеон — целиком. То же делает CSS через :has, но его нет
+// в Safari до 15.4 и Firefox до 121.
+function syncAcc() {
+  document.querySelectorAll('.acc').forEach(a => {
+    const items = [...a.children];
+    items.forEach(it => { it.hidden = it.querySelector(':scope > .card').hidden; });
+    a.hidden = items.every(it => it.hidden);
+  });
+}
 function openFirstAcc() {
+  syncAcc();
   if (!accFresh) return;
   accFresh = false;
   document.querySelectorAll('.acc').forEach(a => {

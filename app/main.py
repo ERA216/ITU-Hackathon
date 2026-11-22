@@ -200,7 +200,11 @@ async def guard(request: Request, call_next):
         # Тело без указанной длины обошло бы проверку размера выше: такие запросы не принимаем.
         return JSONResponse({"detail": t("too_big")}, status_code=411)
     response = await call_next(request)
-    _activity["last"] = time.time()
+    # Посетитель на сайте — это браузер, где кто-то вошёл, или любое действие. Проверки здоровья хостинга
+    # и «будильники» (HEAD или GET без входа, каждые несколько секунд) не в счёт: иначе тишина не наступала
+    # бы никогда, и демо не сбрасывалось бы после чужих действий.
+    if request.method == "POST" or (request.method != "HEAD" and (request.cookies.get("ca_client") or request.cookies.get("ca_analyst"))):
+        _activity["last"] = time.time()
     if request.method == "POST" and response.status_code < 400 and request.url.path not in NOT_DIRTY:
         _activity["dirty"] = True
     response.headers.update(SECURITY_HEADERS)
