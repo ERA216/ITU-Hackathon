@@ -39,7 +39,11 @@ MAX_DOCS = 6                    # файлов на одну апелляцию
 DEMO_HISTORY = os.environ.get("CA_DEMO_HISTORY", "1") == "1"   # история за 30 дней для панели эффективности
 DEMO_TTL_HOURS = 48             # демо-данные старше этого пересоздаются: иначе «свежий» входящий устаревает
 DEMO_REFRESH_HOURS = 44         # фоновый поток обновляет их заранее, пока посетители продолжают работать
-DEMO_REFRESH_CHECK = 600        # как часто он проверяет возраст данных, секунд
+DEMO_REFRESH_CHECK = 60         # как часто он проверяет, не пора ли обновить данные, секунд
+DEMO_IDLE_MINUTES = 30          # демо общее для всех: если его меняли и столько минут никого не было — сброс
+# Что меняли демо и когда к сайту обращались в последний раз. Вход, выход и смена сотрудника демо не меняют.
+_activity = {"last": time.time(), "dirty": False}
+NOT_DIRTY = ("/login", "/logout", "/analyst/employee", "/demo/reset")
 APPEAL_SLA_DAYS = 3             # за сколько дней банк обещает ответить на апелляцию
 WARN_MIN_AMOUNT = 20_000        # входящие от незнакомцев от этой суммы получают предупреждение
 COMPLAINT_DAYS = 30             # на перевод можно пожаловаться в течение стольких дней
@@ -169,7 +173,14 @@ async def lifespan(app):
 
 
 app = FastAPI(title="Чистый счёт: защита от статуса дроппера", dependencies=[Depends(tx, scope="function")],
-              lifespan=lifespan)
+              lifespan=lifespan, redoc_url=None,
+              description="API прототипа: экран клиента, панель сотрудника банка и показатели. Методы клиента требуют "
+                          "входа под демо-персонажем (POST /login), методы сотрудника — входа с кодом доступа.")
+# Документация API (Swagger UI) грузит скрипт и стили с cdn.jsdelivr.net, а общая защита страниц разрешает только
+# свой сервер: без исключения для одной этой страницы она открывалась пустой.
+DOCS_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data: https://fastapi.tiangolo.com; "
+            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
 
 @app.exception_handler(RequestValidationError)
@@ -189,7 +200,12 @@ async def guard(request: Request, call_next):
         # Тело без указанной длины обошло бы проверку размера выше: такие запросы не принимаем.
         return JSONResponse({"detail": t("too_big")}, status_code=411)
     response = await call_next(request)
+    _activity["last"] = time.time()
+    if request.method == "POST" and response.status_code < 400 and request.url.path not in NOT_DIRTY:
+        _activity["dirty"] = True
     response.headers.update(SECURITY_HEADERS)
+    if request.url.path == "/docs":
+        response.headers["Content-Security-Policy"] = DOCS_CSP
     # Страницы и скрипты браузер каждый раз сверяет с сервером (по ETag — быстро): иначе после обновления
     # на хостинге он мог открыть старый тур или старый экран из своего кэша.
     response.headers.setdefault("Cache-Control", "no-cache")
@@ -270,10 +286,14 @@ def ensure_demo(force: bool = False) -> bool:
     return True
 
 
-def refresh_demo_in_background():
+def refresh_demo_in_background(only_if_idle: bool = False) -> bool:
     """Собирает свежие демо-данные в отдельном файле, пока сервер отвечает на запросы, и за доли секунды копирует
     их в рабочую базу (резервное копирование SQLite, без подмены файла). Пересоздание занимает около 15 секунд,
-    на хостинге дольше: без этого каждые 48 часов первый посетитель ждал бы, а сервер не отвечал бы никому."""
+    на хостинге дольше: без этого каждые 48 часов первый посетитель ждал бы, а сервер не отвечал бы никому.
+
+    only_if_idle: сброс после тишины. Если пока данные собирались, кто-то пришёл на сайт, сброс не делается:
+    иначе его действия пропали бы на глазах."""
+    started = time.time()
     path = db.DB_PATH + ".new"
     files = (path, path + "-journal")
     for p in files:
@@ -284,24 +304,39 @@ def refresh_demo_in_background():
         _seed_demo(fresh)
         fresh.commit()
         with LOCK:
+            if only_if_idle and _activity["last"] > started:
+                return False
             fresh.backup(conn)
             shutil.rmtree(UPLOADS, ignore_errors=True)
+            _activity["dirty"] = False
     finally:
         fresh.close()
         for p in files:
             with suppress(FileNotFoundError):
                 os.remove(p)
+    return True
+
+
+def _refresh_reason() -> str | None:
+    """Пора ли обновить демо: данные почти устарели или их меняли, а на сайте давно никого нет."""
+    with LOCK:
+        age = _demo_age()
+    if age is None or age > timedelta(hours=DEMO_REFRESH_HOURS):
+        return "age"
+    if _activity["dirty"] and time.time() - _activity["last"] > DEMO_IDLE_MINUTES * 60:
+        return "idle"
+    return None
 
 
 def _demo_refresher():
+    """Демо общее для всех посетителей: без сброса следующий член жюри увидел бы чужие действия (деньги Айданы уже
+    возвращены, жалоба Гульнар уже подана), и тур начинался бы не с того."""
     while True:
         time.sleep(DEMO_REFRESH_CHECK)
         try:
-            with LOCK:
-                age = _demo_age()
-            if age is None or age > timedelta(hours=DEMO_REFRESH_HOURS):
-                refresh_demo_in_background()
-                print("[Чистый счёт] Демо-данные обновлены в фоне", flush=True)
+            why = _refresh_reason()
+            if why and refresh_demo_in_background(only_if_idle=why == "idle"):
+                print(f"[Чистый счёт] Демо-данные обновлены в фоне ({'данные почти устарели' if why == 'age' else 'демо меняли, а на сайте никого нет'})", flush=True)
         except Exception as e:      # поток не должен падать: при ошибке попробует снова через DEMO_REFRESH_CHECK
             print(f"[Чистый счёт] Не удалось обновить демо-данные: {e!r}", flush=True)
 
@@ -3396,6 +3431,7 @@ def antifraud_report(case_id: int, s: dict = Depends(as_analyst)):
 def demo_reset(s: dict = Depends(as_analyst)):
     """Возвращает демо-данные в исходное состояние: даты отсчитываются от текущего момента."""
     ensure_demo(force=True)
+    _activity["dirty"] = False
     for token in [t for t, v in SESSIONS.items() if v["role"] == "client"]:
         SESSIONS.pop(token)
     return {"ok": True}

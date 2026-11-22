@@ -2399,6 +2399,40 @@ def test_forwarded_stranger_money_does_not_ask_for_a_face_check():
 
 # ---------- Хостинг: фоновое обновление демо-данных ----------
 
+def test_api_docs_page_may_load_swagger_from_its_cdn_only():
+    c = TestClient(main.app)
+    docs = c.get("/docs")
+    assert docs.status_code == 200 and "cdn.jsdelivr.net" in docs.headers["content-security-policy"]
+    assert "cdn.jsdelivr.net" not in c.get("/").headers["content-security-policy"]
+    assert c.get("/redoc").status_code == 404
+    assert "/cash/withdraw" in c.get("/openapi.json").json()["paths"]
+
+
+def test_demo_is_reset_after_it_was_changed_and_nobody_came_for_half_an_hour():
+    st = client(STUDENT)
+    main._activity["dirty"] = False
+    send(st, MOM, 1000)
+    assert main._activity["dirty"] and main._refresh_reason() is None        # только что меняли — не трогаем
+    main._activity["last"] -= main.DEMO_IDLE_MINUTES * 60 + 1
+    assert main._refresh_reason() == "idle"
+    assert main.refresh_demo_in_background(only_if_idle=True)
+    assert account(st, STUDENT)["balance"] == 192000 and not main._activity["dirty"]
+    st.get(f"/clients/{STUDENT}")                                              # пришёл посетитель
+    assert main._refresh_reason() is None
+
+
+def test_idle_reset_is_skipped_if_a_visitor_came_while_data_was_built(monkeypatch):
+    st = client(STUDENT)
+    send(st, MOM, 1000)
+    seed_demo = main._seed_demo
+    def slow_seed(c):                                                          # пока собираются данные, кто-то зашёл
+        seed_demo(c)
+        main._activity["last"] = main.time.time() + 1
+    monkeypatch.setattr(main, "_seed_demo", slow_seed)
+    assert main.refresh_demo_in_background(only_if_idle=True) is False
+    assert account(st, STUDENT)["balance"] == 191000
+
+
 def test_landing_answers_head_for_uptime_checks():
     r = TestClient(main.app).head("/")
     assert r.status_code == 200 and r.content == b""
