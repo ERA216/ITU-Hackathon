@@ -8,6 +8,7 @@ import secrets
 import shutil
 import threading
 import time
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta
 from html import escape
 from urllib.parse import parse_qs, quote
@@ -37,6 +38,8 @@ MAX_BODY = 8 * 1024 * 1024      # файл 5 МБ в base64 занимает о�
 MAX_DOCS = 6                    # файлов на одну апелляцию
 DEMO_HISTORY = os.environ.get("CA_DEMO_HISTORY", "1") == "1"   # история за 30 дней для панели эффективности
 DEMO_TTL_HOURS = 48             # демо-данные старше этого пересоздаются: иначе «свежий» входящий устаревает
+DEMO_REFRESH_HOURS = 44         # фоновый поток обновляет их заранее, пока посетители продолжают работать
+DEMO_REFRESH_CHECK = 600        # как часто он проверяет возраст данных, секунд
 APPEAL_SLA_DAYS = 3             # за сколько дней банк обещает ответить на апелляцию
 WARN_MIN_AMOUNT = 20_000        # входящие от незнакомцев от этой суммы получают предупреждение
 COMPLAINT_DAYS = 30             # на перевод можно пожаловаться в течение стольких дней
@@ -157,7 +160,16 @@ def tx():
             raise
 
 
-app = FastAPI(title="Чистый счёт: защита от статуса дроппера", dependencies=[Depends(tx, scope="function")])
+@asynccontextmanager
+async def lifespan(app):
+    # Фоновое обновление демо-данных запускается только на настоящем сервере (uvicorn), не в тестах.
+    if os.environ.get("CA_DEMO_REFRESH", "1") == "1":
+        threading.Thread(target=_demo_refresher, daemon=True, name="demo-refresher").start()
+    yield
+
+
+app = FastAPI(title="Чистый счёт: защита от статуса дроппера", dependencies=[Depends(tx, scope="function")],
+              lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)
@@ -238,16 +250,60 @@ def log(actor: str, action: str, case_id: int | None = None, transfer_id: int | 
 
 # ---------- Демо-данные ----------
 
+def _seed_demo(c):
+    seed.populate(c, evaluate=DEMO_HISTORY, with_history=DEMO_HISTORY, reset=True, with_business=False)
+    c.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('history',?)", ("1" if DEMO_HISTORY else "0",))
+
+
+def _demo_age() -> timedelta | None:
+    row = conn.execute("SELECT value FROM meta WHERE key='seeded_at'").fetchone()
+    return _now() - datetime.fromisoformat(row["value"]) if row else None
+
+
 def ensure_demo(force: bool = False) -> bool:
     """Создаёт данные при первом запуске и пересоздаёт устаревшие."""
-    row = conn.execute("SELECT value FROM meta WHERE key='seeded_at'").fetchone()
-    stale = row is None or _now() - datetime.fromisoformat(row["value"]) > timedelta(hours=DEMO_TTL_HOURS)
-    if not (force or stale):
+    age = _demo_age()
+    if not (force or age is None or age > timedelta(hours=DEMO_TTL_HOURS)):
         return False
-    seed.populate(conn, evaluate=DEMO_HISTORY, with_history=DEMO_HISTORY, reset=True, with_business=False)
-    conn.execute("INSERT OR REPLACE INTO meta(key,value) VALUES('history',?)", ("1" if DEMO_HISTORY else "0",))
+    _seed_demo(conn)
     shutil.rmtree(UPLOADS, ignore_errors=True)
     return True
+
+
+def refresh_demo_in_background():
+    """Собирает свежие демо-данные в отдельном файле, пока сервер отвечает на запросы, и за доли секунды копирует
+    их в рабочую базу (резервное копирование SQLite, без подмены файла). Пересоздание занимает около 15 секунд,
+    на хостинге дольше: без этого каждые 48 часов первый посетитель ждал бы, а сервер не отвечал бы никому."""
+    path = db.DB_PATH + ".new"
+    files = (path, path + "-journal")
+    for p in files:
+        with suppress(FileNotFoundError):
+            os.remove(p)
+    fresh = db.connect(path)
+    try:
+        _seed_demo(fresh)
+        fresh.commit()
+        with LOCK:
+            fresh.backup(conn)
+            shutil.rmtree(UPLOADS, ignore_errors=True)
+    finally:
+        fresh.close()
+        for p in files:
+            with suppress(FileNotFoundError):
+                os.remove(p)
+
+
+def _demo_refresher():
+    while True:
+        time.sleep(DEMO_REFRESH_CHECK)
+        try:
+            with LOCK:
+                age = _demo_age()
+            if age is None or age > timedelta(hours=DEMO_REFRESH_HOURS):
+                refresh_demo_in_background()
+                print("[Чистый счёт] Демо-данные обновлены в фоне", flush=True)
+        except Exception as e:      # поток не должен падать: при ошибке попробует снова через DEMO_REFRESH_CHECK
+            print(f"[Чистый счёт] Не удалось обновить демо-данные: {e!r}", flush=True)
 
 
 ensure_demo()
@@ -381,7 +437,8 @@ def employees(s: dict = Depends(as_analyst)):
 
 # ---------- Экран клиента: счёт и переводы ----------
 
-@app.get("/", include_in_schema=False)
+# HEAD нужен сервисам, которые проверяют, что сайт жив (и не дают бесплатному хостингу заснуть).
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 def landing():
     """Стартовая страница: что это за проект, главные цифры, карта защит и «Показ за 3 минуты»."""
     return FileResponse(os.path.join(STATIC, "landing.html"))
@@ -1417,7 +1474,7 @@ def _clearance_view(case_id: int) -> dict | None:
 
 def _page(title: str, body: str) -> RawResponse:
     html_doc = f"""<!DOCTYPE html><html lang="{i18n.lang.get()}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>{escape(title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:,"><title>{escape(title)}</title>
 <style>body{{margin:0;background:#fff;color:#1d1d1e;font:16px/1.5 "Roboto Flex",Roboto,"Segoe UI",system-ui,-apple-system,sans-serif}}
 main{{max-width:720px;margin:24px auto;background:#fff;border:1px solid #d6eadf;border-radius:16px;padding:28px 24px}}
 h1{{font-size:22px;margin:0 0 4px;color:#1d1d1e}} .muted{{color:#587366;font-size:14px}}

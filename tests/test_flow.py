@@ -2395,3 +2395,19 @@ def test_forwarded_stranger_money_does_not_ask_for_a_face_check():
     assert cash(client(SELLER), 30000).json()["status"] == "done"    # деньги Гульнар он уже переслал дальше
     w = cash(client(SAMAT), 100000).json()                           # касса казино: мелкие суммы складываются
     assert w["status"] == "ready" and w["foreign_amount"] == 100000
+
+
+# ---------- Хостинг: фоновое обновление демо-данных ----------
+
+def test_landing_answers_head_for_uptime_checks():
+    r = TestClient(main.app).head("/")
+    assert r.status_code == 200 and r.content == b""
+
+
+def test_demo_data_is_refreshed_in_a_separate_file_and_swapped():
+    st = client(STUDENT)
+    send(st, MOM, 1000)
+    assert account(st, STUDENT)["balance"] == 191000
+    main.refresh_demo_in_background()                    # на сервере это делает фоновый поток раз в 44 часа
+    assert account(st, STUDENT)["balance"] == 192000     # данные как в начале показа, вход клиента не сбросился
+    assert analyst().get("/analyst/journal").json()["ok"]

@@ -36,7 +36,7 @@
 ```bash
 pip install -r requirements.txt
 uvicorn app.main:app --reload          # http://127.0.0.1:8000/ (стартовая), /client (клиент), /analyst (код 2026), /analyst/stats, /quality
-python -m pytest -q                    # 165 тестов, ~110–140 с; каждый тест на своей копии базы (на Windows 1 пропускается)
+python -m pytest -q                    # 167 тестов, ~110–140 с; каждый тест на своей копии базы (на Windows 1 пропускается)
 python -m app.quality                  # пересчитать app/static/quality.json (10 наборов + ИП, казино, устройства; ~6–8 минут)
 ```
 
@@ -61,6 +61,7 @@ python -m app.quality                  # пересчитать app/static/quali
 - «Светофор получателя»: `_recipient_risk` в `main.py`, поле `risk` в `/recipients/{id}/check`; на экране — `#recipientNote`. Заявление в полицию — `/clients/{cid}/police-statement/{pid}`, номер обращения `Ж-ГГГГ-NNNNN`.
 - Экран клиента: вкладки «Переводы» и «Защита» — аккордеон (`.acc` → `.acc-item` → `.acc-head` + карточка; `openAcc`, `openFirstAcc`). Новую карточку на этих вкладках класть в `.acc-item` с заголовком; чтобы открыть её из кода или тура — `showTab(вкладка, id карточки)`. Тур подсвечивает карточку вместе с заголовком.
 - Сервер отдаёт всё с `Cache-Control: no-cache` (middleware `guard`): иначе после обновления браузер показывал старые страницы и тур.
+- Демо-данные: `ensure_demo` (синхронно, при запуске и в `/demo/clients`, если старше 48 ч; «Сбросить демо» — принудительно) и `refresh_demo_in_background` (фоновый поток из `lifespan`, после 44 ч, копирование через `backup`). Новую таблицу — в список очистки `seed.populate(reset=True)`, иначе «Сбросить демо» и пересоздание при открытии экрана клиента оставят в ней старые строки.
 - Страница «Эффективность»: сверху четыре главные цифры (`#top`), остальные разделы — `<details>` в `.sections`; калькулятор эффекта (`setupCalc`), «Признаки и решения сотрудников» (`metrics._rule_feedback`), журнал. Страница качества: настройка весов (`tuning` в `quality.json`: веса, тексты, сочетания признаков) и скорость (`speed`). `seed.populate` собирает их в `stats["codes"]`, `stats["eval_ms"]`; прежний `stats["scored"]` не менять — по нему сверяются цифры качества.
 - Группы персонажей в демо-панели — `GROUPS` в `index.html`; новый персонаж должен попасть в одну из групп (это проверяет тест).
 - «Счёт открыли без меня»: `clients.owner_id`, `opened_via`, `opened_device`; ответы — таблица `account_claims`; `/accounts/{id}/claim`, подтверждение `/clients/{cid}/identity-claim/{aid}`, проверка по коду в `/verify`. Счета с `owner_id` не показываются в `/demo/clients`, войти под ними нельзя.
