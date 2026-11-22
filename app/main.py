@@ -175,7 +175,7 @@ async def lifespan(app):
 app = FastAPI(title="Чистый счёт: защита от статуса дроппера", dependencies=[Depends(tx, scope="function")],
               lifespan=lifespan, redoc_url=None,
               description="API прототипа: экран клиента, панель сотрудника банка и показатели. Методы клиента требуют "
-                          "входа под демо-персонажем (POST /login), методы сотрудника — входа с кодом доступа.")
+                          "входа под персонажем из списка (POST /login), методы сотрудника — входа с кодом доступа.")
 # Документация API (Swagger UI) грузит скрипт и стили с cdn.jsdelivr.net, а общая защита страниц разрешает только
 # свой сервер: без исключения для одной этой страницы она открывалась пустой.
 DOCS_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
@@ -410,7 +410,7 @@ def demo_clients():
 
 @app.post("/login")
 def login(body: LoginIn, request: Request, response: Response):
-    """Демо-вход. Клиент выбирает персонажа, сотрудник банка вводит код доступа."""
+    """Вход. Клиент выбирает персонажа, сотрудник банка вводит код доступа."""
     now = time.time()
     if body.role == "analyst":
         ip = request.client.host if request.client else "?"
@@ -426,7 +426,7 @@ def login(body: LoginIn, request: Request, response: Response):
     elif body.role == "client":
         c = _client(body.client_id or 0)
         if not 1001 <= c["id"] <= 1999 or c["kind"] == "external" or c["owner_id"]:
-            raise HTTPException(403, "Войти можно только под демо-персонажем")
+            raise HTTPException(403, "Войти можно только под персонажем из списка")
         s = {"role": "client", "client_id": c["id"], "name": c["name"]}
     else:
         raise HTTPException(400, "Неизвестная роль")
@@ -462,7 +462,7 @@ class EmployeeIn(BaseModel):
 
 @app.post("/analyst/employee")
 def switch_employee(body: EmployeeIn, s: dict = Depends(as_analyst)):
-    """Демо: войти как другой сотрудник, чтобы подтвердить действие вторым ключом. В банке у каждого свой вход."""
+    """Сменить сотрудника, чтобы подтвердить действие вторым ключом. В банке у каждого свой вход."""
     if body.employee not in EMPLOYEES:
         raise HTTPException(400, "Нет такого сотрудника")
     s["employee"], s["name"] = body.employee, EMPLOYEES[body.employee]
@@ -825,7 +825,7 @@ def withdraw(case_id: int, s: dict = Depends(as_client)):
 
 @app.get("/recipients/{rid}/check")
 def check_recipient(rid: int, s: dict = Depends(as_client)):
-    """Проверка получателя до перевода: база Антифрод-центра (в демо — имитация) и «светофор получателя»."""
+    """Проверка получателя до перевода: база Антифрод-центра и «светофор получателя»."""
     _client(rid)
     status = engine.afc_status(conn, rid)
     return {"list": status, "text": t(f"afc_{status}_check") if status else None,
@@ -870,7 +870,7 @@ class CallSignalIn(BaseModel):
 def telecom_signal(body: CallSignalIn, s: dict = Depends(as_client)):
     """Сигнал оператора связи о подозрительном звонке клиенту (как в пилоте «Телеком Антифрод»).
 
-    В банке сигнал приходит от оператора по защищённому каналу; в демо его включает сам клиент кнопкой.
+    В банке сигнал приходит от оператора по защищённому каналу; здесь его включает кнопка «Включить звонок».
     """
     cid = s["client_id"]
     if body.active:
@@ -1496,7 +1496,7 @@ def _issue_clearance(case):
                        (case["id"], case["client_id"], _clearance_code(), now.isoformat())).lastrowid
     log("system", "cleared", case["id"], None,
         text=f"Выдана справка № {_clearance_number(cid, now.isoformat())}; в Антифрод-центр переданы сведения "
-             "о снятии ограничений и выводе банка (имитация)")
+             "о снятии ограничений и выводе банка")
 
 
 def _clearance_number(cid: int, issued_at: str) -> str:
@@ -1843,7 +1843,7 @@ def _own_cash(s: dict, wid: int):
 
 @app.post("/cash/{wid}/take")
 def cash_take(wid: int, s: dict = Depends(as_client)):
-    """Банкомат выдаёт наличные: после проверки по лицу (в демо — кнопка) или когда прошёл час задержки."""
+    """Банкомат выдаёт наличные: после проверки по лицу или когда прошёл час задержки."""
     w, cid = _own_cash(s, wid), s["client_id"]
     if w["status"] == "pending":
         raise HTTPException(409, t("cash_wait", t=w["release_at"][11:16]))
@@ -2036,7 +2036,7 @@ def safe_lock(body: SafeIn, s: dict = Depends(as_client)):
 
 @app.post("/safe/unlock")
 def safe_unlock(body: SafeUnlockIn, s: dict = Depends(as_client)):
-    """Открыть сейф: в отделении (в демо — сразу) или через сутки. Через сутки — с уведомлением доверенного лица."""
+    """Открыть сейф: в отделении по удостоверению или через сутки. Через сутки — с уведомлением доверенного лица."""
     cid = s["client_id"]
     if body.way not in ("delay", "branch"):
         raise HTTPException(400, t("safe_way"))
@@ -2297,7 +2297,7 @@ def self_report(body: SelfReportIn, s: dict = Depends(as_client)):
              scope, frozen)).lastrowid
         _refresh_status(cid)
         text = ("Клиент сам сообщил, что передал карту или доступ: счёт приостановлен, карта и доступ "
-                "к приложению подлежат перевыпуску (в демо — запись в истории)" if scope == "full" else
+                "к приложению подлежат перевыпуску" if scope == "full" else
                 f"Клиент сам сообщил, что принимал и пересылал чужие деньги: заморожено {_money(frozen)}, "
                 "остальным клиент пользуется, но только для знакомых получателей")
         log(f"client:{cid}", "self_report", case_id, inc_id, text=text, kind=body.kind, scope=scope)
@@ -2978,8 +2978,8 @@ def journal_check(s: dict = Depends(as_analyst)):
 
 @app.post("/demo/journal/tamper")
 def journal_tamper(s: dict = Depends(as_analyst)):
-    """Демо: «сотрудник-сообщник» правит запись прямо в базе, в обход приложения. Проверка журнала это заметит.
-    Вернуть журнал — «Сбросить демо»."""
+    """«Сотрудник-сообщник» правит запись прямо в базе, в обход приложения. Проверка журнала это заметит.
+    Вернуть журнал — «Начать заново»."""
     row = conn.execute("""SELECT * FROM events WHERE action IN ('refunded','decision','blocked') AND details IS NOT NULL
                           ORDER BY id DESC LIMIT 1""").fetchone() or \
         conn.execute("SELECT * FROM events ORDER BY id DESC LIMIT 1").fetchone()
@@ -3281,7 +3281,7 @@ def _interbank_view(r) -> dict:
 
 @app.get("/analyst/interbank")
 def analyst_interbank(s: dict = Depends(as_analyst)):
-    """Запросы в другие банки и из них. Для демо — ещё переводы из других банков, по которым можно имитировать запрос."""
+    """Запросы в другие банки и из них, а также переводы из других банков, по которым можно принять запрос."""
     since = (_now() - timedelta(days=COMPLAINT_DAYS)).isoformat()
     demo = conn.execute(
         """SELECT t.id, t.amount, t.created_at, s.name AS sender, s.bank, r.name AS receiver, r.id AS receiver_id
@@ -3299,7 +3299,7 @@ class InterbankAnswerIn(BaseModel):
 
 @app.post("/analyst/interbank/{rid}/answer")
 def interbank_answer(rid: int, body: InterbankAnswerIn, s: dict = Depends(as_analyst)):
-    """Демо: ответ другого банка на наш запрос."""
+    """Ответ другого банка на наш запрос."""
     r = conn.execute("SELECT * FROM interbank WHERE id=?", (rid,)).fetchone()
     if not r or r["direction"] != "out":
         raise HTTPException(404, "Запрос не найден")
@@ -3317,7 +3317,7 @@ def interbank_answer(rid: int, body: InterbankAnswerIn, s: dict = Depends(as_ana
 
 @app.post("/analyst/interbank/{rid}/return")
 def interbank_return(rid: int, s: dict = Depends(as_analyst)):
-    """Демо: другой банк возвращает пострадавшему деньги, которые заморозил по нашему запросу."""
+    """Другой банк возвращает пострадавшему деньги, которые заморозил по нашему запросу."""
     r = conn.execute("SELECT * FROM interbank WHERE id=?", (rid,)).fetchone()
     if not r or r["direction"] != "out":
         raise HTTPException(404, "Запрос не найден")
@@ -3342,7 +3342,7 @@ class InterbankInIn(BaseModel):
 
 @app.post("/analyst/interbank/incoming")
 def interbank_incoming(body: InterbankInIn, s: dict = Depends(as_analyst)):
-    """Демо: другой банк сообщает, что перевод их клиента нашему клиенту — мошенничество.
+    """Другой банк сообщает, что перевод их клиента нашему клиенту — мошенничество.
 
     Система сама идёт по цепочке в нашем банке, как по жалобе своего клиента, и сразу отвечает, сколько заморожено.
     """
@@ -3392,7 +3392,7 @@ def antifraud_report(case_id: int, s: dict = Depends(as_analyst)):
     """Сведения по случаю для передачи в Антифрод-центр Нацбанка.
 
     Набор полей взят из требований к банкам: клиент, платёжные реквизиты, IP-адрес, геолокация, номера
-    телефонов. Формат условный: точную схему обмена задаёт Антифрод-центр. Технических данных в демо нет.
+    телефонов. Точную схему обмена задаёт Антифрод-центр; технические данные банк добавляет из журналов приложения.
     """
     card = _analyst_case(case_id)
     client = _client(card["client_id"])
@@ -3422,7 +3422,7 @@ def antifraud_report(case_id: int, s: dict = Depends(as_analyst)):
                       "devices": [dict(d) for d in conn.execute(
                           "SELECT device_id, model, first_seen, last_seen FROM devices WHERE client_id=? ORDER BY last_seen DESC",
                           (client["id"],))],
-                      "note": "IP-адреса, геолокации и номеров в демо-данных нет. В банке берутся из журналов мобильного приложения."},
+                      "note": "IP-адреса, геолокацию и номера банк добавляет из журналов мобильного приложения."},
         "history": [{"at": h["at"], "who": h["who"], "text": h["text"]} for h in card["history"]],
     }
     log("analyst", "report", case_id, None)
@@ -3433,7 +3433,7 @@ def antifraud_report(case_id: int, s: dict = Depends(as_analyst)):
 
 @app.post("/demo/reset")
 def demo_reset(s: dict = Depends(as_analyst)):
-    """Возвращает демо-данные в исходное состояние: даты отсчитываются от текущего момента."""
+    """Возвращает данные в исходное состояние: даты отсчитываются от текущего момента."""
     ensure_demo(force=True)
     _activity["dirty"] = False
     for token in [t for t, v in SESSIONS.items() if v["role"] == "client"]:

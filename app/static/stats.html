@@ -88,7 +88,7 @@
 <main>
   <h1>Эффективность за 30 дней</h1>
   <p class="lead" id="lead">Загружаем показатели…</p>
-  <div class="note" id="simNote" hidden>Демо-данные. Какие переводы остановить, решал настоящий движок на синтетических переводах. Что дальше сделали клиенты и сотрудники банка (вернули деньги, настояли на переводе, сняли блокировку), смоделировано по заданным вероятностям. Ваши действия в демо добавляются к этим цифрам.</div>
+  <div class="note" id="simNote" hidden>Какие переводы остановить, решал движок на синтетических переводах. Что дальше сделали клиенты и сотрудники банка (вернули деньги, настояли на переводе, сняли блокировку), смоделировано по заданным вероятностям. Действия на сайте добавляются к этим цифрам.</div>
 
   <section class="group"><div class="tiles top" id="top"></div></section>
 
@@ -97,7 +97,7 @@
       <div class="tiles" id="money"></div>
       <p class="muted" style="margin:12px 0 0">«Не пришлось возмещать» — оценка. По закону о платежах банк возмещает клиенту перевод на счёт, который уже был в базе Антифрод-центра. Считаем переводы на такие счета, которые не ушли: остановленные системой, отклонённые по «чёрному» списку и отменённые в период охлаждения.</p></div></details>
     <details><summary>Предупреждения и защиты <span class="muted" id="nPrevent"></span></summary><div class="body">
-      <p class="muted" style="margin:0 0 10px">Только действия в демо: в смоделированной истории периода охлаждения, кредитов, счетов ИП, наличных, QR-кодов и проверок сообщений нет.</p>
+      <p class="muted" style="margin:0 0 10px">Только действия на сайте: в смоделированной истории периода охлаждения, кредитов, счетов ИП, наличных, QR-кодов и проверок сообщений нет.</p>
       <div class="tiles" id="prevent"></div></div></details>
     <details><summary>Нагрузка на сотрудников <span class="muted" id="nLoad"></span></summary><div class="body"><div class="tiles" id="load"></div></div></details>
     <details><summary>Ошибки системы <span class="muted" id="nErrors"></span></summary><div class="body"><div class="tiles" id="errors"></div></div></details>
@@ -116,7 +116,7 @@
     <div class="scroll" id="rulesTable" style="margin-top:10px"></div>
   </section>
   <section class="group" id="calc"><h2>Если внедрить в банке: оценка эффекта</h2>
-    <p class="lead" style="margin:0">Впишите свои цифры. Доли, которые система показала на синтетических данных и в демо, подставлены ниже: ловит переводов дропперам <b id="cRecall">…</b>, зря останавливает честных <b id="cFalse">…</b>, клиенты сами закрывают <b id="cSelf">…</b> остановок, по <b id="cKept">…</b> остановок деньги не ушли.</p>
+    <p class="lead" style="margin:0">Впишите свои цифры. Доли, которые система показала на синтетических данных и в смоделированной истории, подставлены ниже: ловит переводов дропперам <b id="cRecall">…</b>, зря останавливает честных <b id="cFalse">…</b>, клиенты сами закрывают <b id="cSelf">…</b> остановок, по <b id="cKept">…</b> остановок деньги не ушли.</p>
     <div class="calc">
       <div><label for="cClients">Клиентов, которые делают переводы, тыс.</label><input id="cClients" type="number" min="1" value="500"></div>
       <div><label for="cPer">Переводов на клиента в месяц</label><input id="cPer" type="number" min="1" value="10"></div>
@@ -130,7 +130,7 @@
   <section class="group" id="journal"><h2>Журнал действий</h2>
     <p class="lead" style="margin:0">Каждая запись журнала хранит отпечаток предыдущей. Если запись изменить или удалить прямо в базе, в обход приложения, проверка покажет, с какой записи журнал испорчен. Это защищает от сотрудника-сообщника и помогает в спорах с клиентом и на проверках регулятора.</p>
     <div class="jstate" id="jState">Проверяем…</div>
-    <div class="jactions"><button id="jCheck">Проверить ещё раз</button><button id="jTamper">Демо: изменить запись задним числом</button></div>
+    <div class="jactions"><button id="jCheck">Проверить ещё раз</button><button id="jTamper">Подделать запись, как сотрудник-сообщник</button></div>
   </section>
 </main>
 <script>
@@ -284,13 +284,13 @@ async function checkJournal(extra = '') {
   $('jState').className = 'jstate ' + (j.ok ? 'ok' : 'bad');
   $('jState').textContent = j.ok
     ? `Журнал цел: ${num(j.count)} ${j.count % 10 === 1 && j.count % 100 !== 11 ? 'запись' : j.count % 10 >= 2 && j.count % 10 <= 4 && (j.count % 100 < 12 || j.count % 100 > 14) ? 'записи' : 'записей'}, ни одну не меняли и не удаляли. Последний отпечаток ${j.last}…, проверено ${at(j.checked_at)}.`
-    : `Журнал испорчен: запись № ${j.broken.id} (${at(j.broken.at)}) изменили или удалили задним числом. ${extra}Вернуть журнал — «Сбросить демо» в панели аналитика.`;
+    : `Журнал испорчен: запись № ${j.broken.id} (${at(j.broken.at)}) изменили или удалили задним числом. ${extra}Вернуть журнал — «Начать заново» в панели аналитика.`;
 }
 $('jCheck').onclick = () => checkJournal();
 $('jTamper').onclick = async () => {
   const r = await fetch('/demo/journal/tamper', {method: 'POST'});
   const t = await r.json();
-  checkJournal(r.ok ? `Демо изменило текст записи на «${t.text}». ` : '');
+  checkJournal(r.ok ? `Текст записи изменён на «${t.text}». ` : '');
 };
 </script>
 <script src="/tour.js"></script>

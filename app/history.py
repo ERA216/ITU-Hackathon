@@ -149,7 +149,7 @@ def _missed_scheme(conn, p: dict, now: datetime, rng: random.Random):
                                       (fwd_case, p["sender"], f"{rng.getrandbits(32):08X}", decided.isoformat())).lastrowid
                     _ev(conn, decided, "system", "cleared", fwd_case, None,
                         text=f"Выдана справка № ЧС-{decided.year}-{cl:05d}; в Антифрод-центр переданы сведения "
-                             "о снятии ограничений и выводе банка (имитация)")
+                             "о снятии ограничений и выводе банка")
 
     # Звено 2: карта, на которой остались деньги. Апелляций от таких счетов не бывает.
     holder_case = conn.execute(

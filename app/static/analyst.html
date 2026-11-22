@@ -111,7 +111,7 @@
 <body>
 <header class="topbar"><a class="brand" href="/"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z" fill="#00ab75"/><path d="m8.5 12 2.5 2.5 4.5-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Чистый счёт</a>
   <nav class="pages" aria-label="Страницы проекта"><a href="/client">Экран клиента</a><a href="/analyst" aria-current="page">Панель аналитика</a><a href="/analyst/stats">Эффективность</a><a href="/quality">Качество движка</a></nav>
-  <span class="tools"><button class="hbtn" id="reset" hidden>Сбросить демо</button><button class="hbtn" id="logout" hidden>Выйти</button></span></header>
+  <span class="tools"><button class="hbtn" id="reset" hidden>Начать заново</button><button class="hbtn" id="logout" hidden>Выйти</button></span></header>
 <form class="card login" id="login" hidden>
   <h2>Вход для сотрудника банка</h2>
   <label for="empSel" class="muted">Сотрудник</label>
@@ -231,22 +231,22 @@ async function loadInterbank() {
   const d = await api('/analyst/interbank');
   $('queueTitle').textContent = `Другие банки: ${d.requests.length}`;
   const cases = r => r.cases.length ? `<div class="muted" style="margin-top:4px">Случаи: ${r.cases.map(id => `<button class="linkbtn" data-open="${id}">№${id}</button>`).join(', ')}</div>` : '';
-  $('queue').innerHTML = '<p class="muted" style="margin:0 0 8px">Если деньги пострадавшего ушли в другой банк, туда через Антифрод-центр уходит запрос на заморозку. Если запрос приходит к нам, система сама идёт по цепочке в нашем банке и сразу отвечает. В демо другой банк — имитация.</p>' +
+  $('queue').innerHTML = '<p class="muted" style="margin:0 0 8px">Если деньги пострадавшего ушли в другой банк, туда через Антифрод-центр уходит запрос на заморозку. Если запрос приходит к нам, система сама идёт по цепочке в нашем банке и сразу отвечает.</p>' +
     d.requests.map(r => `<div class="item" style="cursor:default">
       <b>${r.direction === 'out' ? 'Наш запрос' : 'Запрос к нам'} · ${esc(r.bank)}: ${money(r.amount)}</b>
       <span class="muted">${r.direction === 'out' ? `пострадавший: ${esc(r.victim)} · деньги переслал: ${esc(r.ours)}` : `их клиент перевёл нашему: ${esc(r.ours)}`}</span><br>
       <span class="pill ${r.status === 'sent' ? 'wait' : r.status === 'gone' ? 'organizer' : 'unwitting'}">${esc(r.status_text)}</span>
       ${r.overdue ? '<span class="pill late">Срок ответа прошёл</span>' : ''}
       <div class="muted" style="margin-top:4px">${r.status === 'sent' ? `Отправлен ${when(r.sent_at)}, ответ до ${when(r.due_at)}` : esc(r.note || '')}${r.returned ? ` · вернули пострадавшему ${money(r.returned)}` : ''}</div>
-      ${r.status === 'sent' ? `<div class="muted" style="margin-top:6px">Демо: ответ другого банка</div><div class="actions" style="margin-top:4px"><button class="act approve" style="padding:7px 10px" data-ans="${r.id}" data-res="frozen">Заморожено</button>
+      ${r.status === 'sent' ? `<div class="muted" style="margin-top:6px">Ответ другого банка</div><div class="actions" style="margin-top:4px"><button class="act approve" style="padding:7px 10px" data-ans="${r.id}" data-res="frozen">Заморожено</button>
         <button class="act reject" style="padding:7px 10px" data-ans="${r.id}" data-res="gone">Деньги уже ушли</button></div>` : ''}
-      ${r.can_return ? `<button class="act approve" style="margin-top:6px;padding:7px 10px" data-ret="${r.id}">Имитировать возврат пострадавшему</button>` : ''}
+      ${r.can_return ? `<button class="act approve" style="margin-top:6px;padding:7px 10px" data-ret="${r.id}">Другой банк вернул деньги пострадавшему</button>` : ''}
       ${cases(r)}
     </div>`).join('') + (d.requests.length ? '' : '<div class="card muted">Запросов пока нет.</div>') +
-    (d.incoming_demo.length ? '<h2 style="margin:14px 0 8px">Демо: переводы из других банков</h2>' + d.incoming_demo.map(t => `<div class="item" style="cursor:default">
+    (d.incoming_demo.length ? '<h2 style="margin:14px 0 8px">Переводы из других банков</h2>' + d.incoming_demo.map(t => `<div class="item" style="cursor:default">
       <b>${esc(t.sender)} → ${esc(t.receiver)}</b>
       <span class="muted">${money(t.amount)} · ${when(t.created_at)}</span><br>
-      <button class="act reject" style="margin-top:6px;padding:7px 10px" data-incoming="${t.id}">Имитировать запрос другого банка</button>
+      <button class="act reject" style="margin-top:6px;padding:7px 10px" data-incoming="${t.id}">Принять запрос другого банка</button>
     </div>`).join('') : '');
   $('queue').querySelectorAll('[data-open]').forEach(b => b.onclick = () => open(+b.dataset.open));
   const act = (sel, call) => $('queue').querySelectorAll(sel).forEach(b => b.onclick = async () => {
@@ -546,7 +546,7 @@ async function open(id) {
       ${c.complaint ? `<p style="margin:12px 0 0"><b>Пострадавшему возвращено ${money(c.complaint.returned)} из ${money(c.complaint.amount)}.</b>
         ${c.complaint.frozen ? ` Заморожено в цепочке: ${money(c.complaint.frozen)}.` : ''}</p>` : ''}
       ${c.refundable && !(c.approval && c.approval.kind === 'refund') ? `<button class="act approve" id="refund" style="max-width:420px;margin-top:10px">Вернуть пострадавшему ${money(c.refundable)} с этого счёта</button>
-        <p class="muted" style="margin:8px 0 0">${c.refundable >= 100000 ? 'Возврат от 100 000 ₸ подтверждает второй сотрудник. ' : ''}В банке для этого нужно согласие владельца счёта либо решение суда или органа уголовного преследования. В демо это кнопка.</p>` : ''}
+        <p class="muted" style="margin:8px 0 0">${c.refundable >= 100000 ? 'Возврат от 100 000 ₸ подтверждает второй сотрудник. ' : ''}В банке для этого нужно согласие владельца счёта либо решение суда или органа уголовного преследования.</p>` : ''}
       ${c.approval && c.approval.kind === 'refund' ? approvalBox(c.approval) : ''}
       </div>` : ''}
     <div class="grid2">
@@ -568,7 +568,7 @@ async function open(id) {
         ${h.details.filename ? `<br><span class="muted">${esc(h.details.filename)}</span>` : ''}</span></li>`).join('') || '<li class="muted">Записей пока нет</li>'}</ul>
     </div>
     <div class="card"><h2>Антифрод-центр Нацбанка</h2>
-      <p class="muted">Сведения по случаю для передачи в Антифрод-центр: клиент, операции, признаки, цепочка, решение. Формат условный, технических данных (IP, геолокация, номера) в демо нет.</p>
+      <p class="muted">Сведения по случаю для передачи в Антифрод-центр: клиент, операции, признаки, цепочка, решение. Технические данные (IP, геолокация, номера) банк добавит из журналов приложения.</p>
       <button class="act" id="report" style="background:var(--line);max-width:320px">Выгрузить сведения (JSON)</button>
     </div>
 `;
@@ -619,7 +619,7 @@ function showPanel() { $('login').hidden = true; for (const id of ['wrap', 'rese
 async function loadMe() {
   me = await api('/analyst/employees');
   const other = Object.entries(me.employees).find(([k]) => k !== me.employee);
-  $('emp').innerHTML = `Сотрудник: <b>${esc(me.name)}</b>` + (other ? ` · <button class="linkbtn" id="empSwitch">Демо: войти как ${esc(other[1])}</button>` : '');
+  $('emp').innerHTML = `Сотрудник: <b>${esc(me.name)}</b>` + (other ? ` · <button class="linkbtn" id="empSwitch">Сменить сотрудника: ${esc(other[1])}</button>` : '');
   if (other) $('empSwitch').onclick = async () => {
     me = await api('/analyst/employee', {employee: other[0]});
     await loadMe();
@@ -656,7 +656,7 @@ $('login').onsubmit = async e => {
 $('logout').onclick = async () => { await fetch('/logout?role=analyst', {method:'POST'}); showLogin(); };
 $('reset').onclick = async () => {
   $('reset').disabled = true;
-  try { await api('/demo/reset', {}); current = null; $('detail').innerHTML = '<div class="card muted">Демо-данные возвращены в исходное состояние.</div>'; await loadQueue(); }
+  try { await api('/demo/reset', {}); current = null; $('detail').innerHTML = '<div class="card muted">Данные возвращены в исходное состояние.</div>'; await loadQueue(); }
   finally { $('reset').disabled = false; }
 };
 fetch('/me').then(r => r.ok ? r.json() : null).then(s => s && s.analyst ? showPanel() : showLogin());
