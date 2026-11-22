@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z' fill='%2300ab75'/%3E%3Cpath d='m8.5 12 2.5 2.5 4.5-5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <title>Чистый счёт</title>
 <style>
   :root { --ink:#1d1d1e; --ink2:#2f4a3f; --muted:#587366; --line:#d6eadf; --brand:#00ab75; --brand-ink:#00875c; --fill:#e6f3ed; }
@@ -11,7 +11,9 @@
   body { margin:0; background:#fff; color:var(--ink); font:16px/1.5 "Roboto Flex", Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; }
   /* Общее верхнее меню: четыре страницы проекта. */
   .topbar { display:flex; justify-content:flex-start; align-items:center; gap:16px; flex-wrap:wrap; padding:10px 20px; background:#fff; border-bottom:1px solid #d6eadf; }
-  .topbar .brand { font-weight:700; font-size:17px; color:#1d1d1e; text-decoration:none; white-space:nowrap; }
+  .topbar .brand { font-weight:700; font-size:17px; color:#1d1d1e; text-decoration:none; white-space:nowrap;
+                   display:inline-flex; align-items:center; gap:8px; }
+  .topbar .brand .logo { width:22px; height:22px; flex:none; }
   .pages { display:flex; gap:6px; background:none; border-radius:20px; padding:0; overflow-x:auto; scrollbar-width:none; }
   .pages::-webkit-scrollbar { display:none; }
   .pages a { padding:7px 14px; border-radius:17px; border:0; background:none; font-size:14px; font-weight:500; color:#1d1d1e; text-decoration:none; white-space:nowrap; margin:0; }
@@ -48,22 +50,68 @@
   ul.plain { padding-left:18px; margin:8px 0; }
   ul.plain li { margin:6px 0; }
   .note { border:1px dashed #b9dccb; color:var(--muted); border-radius:12px; padding:10px 14px; font-size:14px; }
+  /* Первый экран: слева о проекте, справа экран приложения в момент остановки перевода (та же вёрстка, что у клиента). */
+  .hero { display:grid; grid-template-columns:minmax(0, 1fr) 290px; gap:36px; align-items:center; }
+  .hero .lead { margin-bottom:14px; }
+  @media (max-width:760px) { .hero { grid-template-columns:1fr; } .mock { justify-self:center; } }
+  .mock { margin:0; width:290px; }
+  .mock-screen { position:relative; height:540px; border:10px solid #0f3d2e; border-radius:38px; overflow:hidden; background:#fff;
+                 font-size:13px; line-height:1.4; }
+  .mock-top { display:flex; gap:10px; align-items:center; padding:16px 16px 10px; }
+  .mock-ava { width:34px; height:34px; flex:none; border-radius:50%; background:#e6f7f0; color:var(--brand-ink); display:flex;
+              align-items:center; justify-content:center; font-weight:700; }
+  .mock small { display:block; color:var(--muted); font-size:11px; }
+  .mock-top b { font-size:15px; }
+  .mock-card { margin:0 12px; border:1px solid var(--line); border-radius:14px; padding:12px 14px; }
+  .mock-card b { font-size:24px; }
+  .mock-dim { position:absolute; inset:0; background:rgba(10,48,36,.45); }
+  .mock-sheet { position:absolute; left:0; right:0; bottom:0; background:#fff; border-radius:22px 22px 0 0; padding:10px 14px 14px; }
+  .mock-handle { display:block; width:32px; height:4px; border-radius:2px; background:var(--line); margin:0 auto 10px; }
+  .mock-h { display:block; font-size:16px; margin-bottom:6px; }
+  .mock-sheet p { margin:0 0 6px; }
+  .mock-sheet ul { margin:0 0 10px; padding-left:16px; }
+  .mock-sheet li { margin:3px 0; }
+  .mock-btn { display:block; text-align:center; background:var(--brand); color:#fff; border-radius:10px; padding:10px; font-weight:500; }
+  .mock-link { display:block; text-align:center; color:var(--muted); padding:9px 0 0; font-weight:500; }
+  .mock figcaption { color:var(--muted); font-size:13px; text-align:center; margin-top:8px; }
 </style>
 </head>
 <body>
-<header class="topbar"><a class="brand" href="/">Чистый счёт</a>
+<header class="topbar"><a class="brand" href="/"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z" fill="#00ab75"/><path d="m8.5 12 2.5 2.5 4.5-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Чистый счёт</a>
   <nav class="pages" aria-label="Страницы проекта"><a href="/client">Экран клиента</a><a href="/analyst">Панель аналитика</a><a href="/analyst/stats">Эффективность</a><a href="/quality">Качество движка</a></nav></header>
 <main>
-  <section class="card" id="hero">
-    <h1>Чистый счёт</h1>
-    <p class="lead">Защищаем честных клиентов банка от статуса дроппера и помогаем банку находить настоящих дропперов.</p>
-    <p>Мошенники переводят человеку «по ошибке» чужие деньги и просят вернуть их на другую карту. Так студент или продавец, ничего не подозревая, становится звеном схемы, а потом его счёт блокируют без понятных сроков. По открытым данным, с 2025 года в Казахстане заблокированы сотни тысяч дропперских счетов, и среди них много невольных участников.</p>
-    <p>«Чистый счёт» — прототип для мобильного приложения и панели сотрудника Банка ЦентрКредит: он предупреждает о чужих деньгах, останавливает пересылку, разбирает жалобы по цепочке переводов и честно отличает невольного участника от организатора.</p>
-    <div class="actions">
-      <button class="btn main" id="tourStart">Показ за 3 минуты</button>
-      <a class="btn" href="/client">Экран клиента</a>
-      <a class="btn" href="/analyst">Панель сотрудника банка</a>
+  <section class="card hero" id="hero">
+    <div>
+      <h1>Чистый счёт</h1>
+      <p class="lead">Защищаем честных клиентов банка от статуса дроппера и помогаем банку находить настоящих дропперов.</p>
+      <p>Мошенники переводят человеку «по ошибке» чужие деньги и просят вернуть их на другую карту — так студент или продавец становится звеном схемы, а потом его счёт блокируют. С 2025 года в Казахстане заблокированы сотни тысяч дропперских счетов, и среди них много невольных участников.</p>
+      <p>Прототип для приложения и панели сотрудника Банка ЦентрКредит: предупреждает о чужих деньгах, останавливает пересылку и честно отличает невольного участника от организатора.</p>
+      <div class="actions">
+        <button class="btn main" id="tourStart">Показ за 3 минуты</button>
+        <a class="btn" href="/client">Экран клиента</a>
+        <a class="btn" href="/analyst">Панель сотрудника банка</a>
+      </div>
     </div>
+    <figure class="mock">
+      <div class="mock-screen" aria-hidden="true">
+        <div class="mock-top"><span class="mock-ava">А</span><span><small>Здравствуйте,</small><b>Айдана</b></span></div>
+        <div class="mock-card"><small>Доступно</small><b>42 000 ₸</b><small>Ещё 150 000 ₸ на паузе до решения по остановленному переводу</small></div>
+        <div class="mock-dim"></div>
+        <div class="mock-sheet">
+          <i class="mock-handle"></i>
+          <b class="mock-h">Мы остановили этот перевод</b>
+          <p>Похоже на схему «ошибочный перевод»: вам прислали чужие деньги и просят переслать их третьему лицу.</p>
+          <ul>
+            <li>Получатель в списке подозрительных счетов Антифрод-центра</li>
+            <li>Деньги уходят не тому, кто их прислал, а третьему лицу</li>
+            <li>Перевод отправляется меньше чем через 2 часа после получения</li>
+          </ul>
+          <span class="mock-btn">Вернуть 150 000 ₸ отправителю</span>
+          <span class="mock-link">Всё равно хочу перевести</span>
+        </div>
+      </div>
+      <figcaption>Экран клиента: банк остановил пересылку чужих денег</figcaption>
+    </figure>
   </section>
 
   <section class="card">

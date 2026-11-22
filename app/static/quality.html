@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z' fill='%2300ab75'/%3E%3Cpath d='m8.5 12 2.5 2.5 4.5-5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <title>Чистый счёт: качество движка</title>
 <style>
   :root { --bg:#fff; --card:#fff; --ink:#1d1d1e; --ink2:#2f4a3f; --muted:#587366; --line:#d6eadf; --grid:#e3f0ea;
@@ -53,7 +53,9 @@
   ul.notes li { margin:4px 0; }
   /* Общее верхнее меню: четыре страницы проекта, текущая выделена. */
   .topbar { display:flex; justify-content:flex-start; align-items:center; gap:16px; flex-wrap:wrap; padding:10px 20px; background:#fff; border-bottom:1px solid #d6eadf; }
-  .topbar .brand { font-weight:700; font-size:17px; color:#1d1d1e; text-decoration:none; white-space:nowrap; }
+  .topbar .brand { font-weight:700; font-size:17px; color:#1d1d1e; text-decoration:none; white-space:nowrap;
+                   display:inline-flex; align-items:center; gap:8px; }
+  .topbar .brand .logo { width:22px; height:22px; flex:none; }
   .pages { display:flex; gap:6px; background:none; border-radius:20px; padding:0; overflow-x:auto; scrollbar-width:none; }
   .pages::-webkit-scrollbar { display:none; }
   .pages a { padding:7px 14px; border-radius:17px; border:0; background:none; font-size:14px; font-weight:500; color:#1d1d1e; text-decoration:none; white-space:nowrap; margin:0; }
@@ -68,7 +70,7 @@
 </style>
 </head>
 <body>
-<header class="topbar"><a class="brand" href="/">Чистый счёт</a>
+<header class="topbar"><a class="brand" href="/"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z" fill="#00ab75"/><path d="m8.5 12 2.5 2.5 4.5-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Чистый счёт</a>
   <nav class="pages" aria-label="Страницы проекта"><a href="/client">Экран клиента</a><a href="/analyst">Панель аналитика</a><a href="/analyst/stats">Эффективность</a><a href="/quality" aria-current="page">Качество движка</a></nav></header>
 <main>
   <h1 id="title">Качество движка перехвата</h1>

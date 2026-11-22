@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="data:,">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z' fill='%2300ab75'/%3E%3Cpath d='m8.5 12 2.5 2.5 4.5-5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <title>Чистый счёт</title>
 <style>
   /* Цвета и формы как в приложении bcc.kz: светлый мятный фон, белые карточки, зелёный акцент. */
@@ -130,7 +130,11 @@
   .demo-title { font-size:20px; font-weight:700; margin-bottom:4px; }
   .demo-body .muted { font-size:13px; }
   .demo-body p { margin:4px 0 0; }
-  .hint { background:#00ab75; color:#fff; border:1px solid #00ab75; border-radius:12px; padding:12px 14px; font-size:14px; margin:10px 0 0; }
+  .hint { background:var(--fill); color:var(--ink); border-radius:12px; padding:12px 14px; font-size:14px; margin:10px 0 0; }
+  .hint b { display:block; margin-bottom:4px; }
+  .hint p { margin:0; }
+  .hint ul { margin:6px 0 0; padding-left:18px; }
+  .hint li { margin:4px 0; }
   .demo-body #who { background:#00ab75; color:#fff; border:1px solid #00ab75; font-weight:500; }
   .demo-body #who option { background:#fff; color:#1d1d1e; }
   .demo-sec { border-top:1px solid var(--line); margin-top:16px; padding-top:14px; }
@@ -176,6 +180,23 @@
   .row .body { flex:1; min-width:0; }
   .row .body .tag { margin-top:4px; }
   .pane-title { font-size:22px; font-weight:700; margin:2px 0 14px; }
+  /* Главная: самое важное предупреждение целиком, остальные свёрнуты до заголовка. */
+  .alert.compact { padding:12px 16px; }
+  .alert.compact > h2 { display:flex; align-items:center; gap:10px; margin:0; cursor:pointer; font-size:16px; }
+  .alert.compact > h2::after { content:""; margin-left:auto; flex:none; width:8px; height:8px; margin-right:4px;
+                              border-right:2px solid currentColor; border-bottom:2px solid currentColor; transform:rotate(-45deg); }
+  .alert.compact.open > h2 { margin-bottom:6px; }
+  .alert.compact.open > h2::after { transform:rotate(45deg); }
+  .alert.compact:not(.open) > :not(h2) { display:none; }
+  /* Операции: кружок с инициалами того, с кем был перевод. */
+  .row .ico { font-size:14px; font-weight:700; letter-spacing:.02em; }
+  /* «Подробнее»: видна главная фраза, длинное объяснение свёрнуто. */
+  details.more { margin:2px 0 8px; font-size:inherit; }
+  details.more summary { font-size:14px; }
+  details.more p { margin:6px 0 0; }
+  .alert details.more summary { color:inherit; text-decoration:underline; text-underline-offset:3px; }
+  .brief > p:first-child { margin-top:0; }
+  .brief > p { margin-bottom:4px; }
   /* Вкладки «Переводы» и «Защита» — аккордеон: открыта одна карточка, у остальных видны заголовок и строка о том, что внутри. */
   .acc { background:#fff; border:1px solid #d6eadf; border-radius:16px; margin-bottom:12px; }
   .acc:not(:has(> .acc-item > .card:not([hidden]))) { display:none; }
@@ -207,7 +228,9 @@
   }
   /* Общее верхнее меню: четыре страницы проекта, текущая выделена. */
   .topbar { display:flex; justify-content:flex-start; align-items:center; gap:16px; flex-wrap:wrap; padding:10px 20px; background:#fff; border-bottom:1px solid #d6eadf; }
-  .topbar .brand { font-weight:700; font-size:17px; color:#1d1d1e; text-decoration:none; white-space:nowrap; }
+  .topbar .brand { font-weight:700; font-size:17px; color:#1d1d1e; text-decoration:none; white-space:nowrap;
+                   display:inline-flex; align-items:center; gap:8px; }
+  .topbar .brand .logo { width:22px; height:22px; flex:none; }
   .pages { display:flex; gap:6px; background:none; border-radius:20px; padding:0; overflow-x:auto; scrollbar-width:none; }
   .pages::-webkit-scrollbar { display:none; }
   .pages a { padding:7px 14px; border-radius:17px; border:0; background:none; font-size:14px; font-weight:500; color:#1d1d1e; text-decoration:none; white-space:nowrap; margin:0; }
@@ -222,7 +245,7 @@
 </style>
 </head>
 <body>
-<header class="topbar"><a class="brand" href="/" data-t="app">Чистый счёт</a>
+<header class="topbar"><a class="brand" href="/"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z" fill="#00ab75"/><path d="m8.5 12 2.5 2.5 4.5-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span data-t="app">Чистый счёт</span></a>
   <nav class="pages" aria-label="Страницы проекта"><a href="/client" aria-current="page" data-t="navClient">Экран клиента</a><a href="/analyst" data-t="navStaff">Панель аналитика</a><a href="/analyst/stats" data-t="navStats">Эффективность</a><a href="/quality" data-t="navQuality">Качество движка</a></nav></header>
 <div class="app">
   <aside class="demo-panel" id="demoPanel">
@@ -234,11 +257,11 @@
       <select id="who"></select>
       <p class="hint" id="personaHint"></p>
       <div class="demo-sec">
-        <div class="muted" data-t="demoH"></div>
+        <div class="muted brief" data-tb="demoH"></div>
         <button class="soft" id="callToggle"></button>
       </div>
       <div class="demo-sec">
-        <div class="muted" data-t="demoSessH"></div>
+        <div class="muted brief" data-tb="demoSessH"></div>
         <label class="opt"><input type="checkbox" data-sess="on_call"><span data-t="sessCall"></span></label>
         <label class="opt"><input type="checkbox" data-sess="pasted"><span data-t="sessPaste"></span></label>
         <label class="opt"><input type="checkbox" data-sess="from_link"><span data-t="sessLink"></span></label>
@@ -321,7 +344,7 @@
         <button class="acc-head" aria-expanded="false"><span><b data-t="qrH"></b><span class="muted" data-t="accQr"></span></span></button>
         <div class="card" id="qrCard">
           <h2 data-t="qrH"></h2>
-          <p class="muted" data-t="qrAbout" style="margin-top:0"></p>
+          <div class="muted brief" data-tb="qrAbout"></div>
           <div class="muted" data-t="qrDemo"></div>
           <div class="examples" style="margin-top:8px">
             <button class="soft" data-qr="parking" data-t="qrParking"></button>
@@ -426,8 +449,9 @@ const T = {
                'Шот бойынша операциялар тоқтатылған кезде аударым жасау мүмкін емес. Не істеу керегі басты бетте жазылған.'],
   demoToggle: ['Демо: кем войти и что попробовать', 'Демо: кім ретінде кіріп, не істеп көру'],
   demoTitle: ['Демо-режим', 'Демо-режим'],
-  demoIntro: ['Прототип для хакатона. Выберите персонажа и следуйте подсказке: экран клиента работает как приложение банка.',
-              'Хакатонға арналған прототип. Кейіпкерді таңдап, кеңесті орындаңыз: клиент экраны банк қосымшасы сияқты жұмыс істейді.'],
+  demoIntro: ['Выберите персонажа и следуйте подсказке: экран клиента работает как приложение банка.',
+              'Кейіпкерді таңдап, кеңесті орындаңыз: клиент экраны банк қосымшасы сияқты жұмыс істейді.'],
+  moreH: ['Подробнее', 'Толығырақ'],
   statsLink: ['Эффективность системы', 'Жүйенің тиімділігі'],
   hint_1001: ['20 минут назад пришло 150 000 ₸ от незнакомца. Попробуйте переслать их на «Карту для возврата» во вкладке «Переводы» или вернуть отправителю с главной. Или снимите их наличными («Переводы» → «Снять наличные без карты»): банкомат попросит проверку по лицу.',
               '20 минут бұрын бейтаныс адамнан 150 000 ₸ келді. Оны «Аударымдар» бөлімінде «қайтаруға арналған картаға» жіберіп көріңіз немесе басты беттен жіберушіге қайтарыңыз. Немесе оны қолма-қол алып көріңіз («Аударымдар» → «Картасыз қолма-қол ақша алу»): банкомат бет-әлпет бойынша тексеруді сұрайды.'],
@@ -823,7 +847,8 @@ const T = {
 };
 const cookieLang = (document.cookie.match(/(?:^|; )ca_lang=(ru|kk)/) || [])[1];
 let L = cookieLang || 'ru';
-const tr = (key, vars = {}) => T[key][L === 'kk' ? 1 : 0].replace(/\{(\w+)\}/g, (_, k) => vars[k]);
+// Имя с инициалом («Алия О.») в конце фразы не даёт двойной точки.
+const tr = (key, vars = {}) => T[key][L === 'kk' ? 1 : 0].replace(/\{(\w+)\}/g, (_, k) => vars[k]).replace(/(?<!\.)\.\.(?!\.)/g, '.');
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
@@ -831,10 +856,24 @@ const money = n => Number(n).toLocaleString('ru-RU') + ' ₸';
 const hm = s => String(s || '').slice(11, 16);
 let people = [], me = null, held = null, appeal = null, serverNow = null;
 
+// Короткие тексты: видна первая, главная фраза, остальное объяснение — под «Подробнее». keepLast: последняя фраза
+// (что делать) тоже видна. Делим готовый текст по фразам, поэтому новых переводов не нужно.
+const more = (text, cls = '') => `<details class="more ${cls}"><summary>${tr('moreH')}</summary><p>${esc(text)}</p></details>`;
+const sentences = text => (text.match(/[\s\S]*?[.!?]+[»")]*\.?(?=\s+[«"A-ZА-ЯЁӘҒҚҢӨҰҮҺІ0-9+]|\s*$)/g) || [])
+  .map(x => x.trim()).filter(Boolean);
+function brief(text, {keepLast = false, cls = ''} = {}) {
+  const s = sentences(text);
+  if (s.length < 2 || s.join(' ').length < text.trim().length - 2) return `<p class="${cls}">${esc(text)}</p>`;
+  const last = keepLast && s.length > 2;
+  const shown = last ? [s[0], s[s.length - 1]] : [s[0]], hidden = last ? s.slice(1, -1) : s.slice(1);
+  return `<p class="${cls}">${esc(shown.join(' '))}</p>` + more(hidden.join(' '), cls);
+}
+
 function applyStatic() {
   document.documentElement.lang = L === 'kk' ? 'kk' : 'ru';
   document.title = tr('app');
   document.querySelectorAll('[data-t]').forEach(n => n.textContent = tr(n.dataset.t));
+  document.querySelectorAll('[data-tb]').forEach(n => n.innerHTML = brief(tr(n.dataset.tb)));
   $('who').setAttribute('aria-label', tr('who'));
   document.querySelectorAll('[data-lang]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.lang === L)));
 }
@@ -869,8 +908,11 @@ function dateText(s, time = true) {
   return `${d.getDate()} ${KK_MONTHS[d.getMonth()]}` + (time ? `, ${hm}` : '');
 }
 const when = s => dateText(s);
-const ARROW_IN = '<svg class="i" viewBox="0 0 24 24"><path d="M12 5v14"/><path d="m6 13 6 6 6-6"/></svg>';
-const ARROW_OUT = '<svg class="i" viewBox="0 0 24 24"><path d="M12 19V5"/><path d="m6 11 6-6 6 6"/></svg>';
+// Операции: кружок с инициалами того, с кем был перевод (до двух букв из слов с заглавной: «ИП Асель» — «ИА»).
+// У кредита — знак тенге, у снятия наличных — купюра.
+const CASH_ICON = '<svg class="i" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>';
+const initials = name => String(name || '').replace(/[«»"()…]/g, ' ').split(/\s+/)
+  .filter(w => /^[A-ZА-ЯЁӘҒҚҢӨҰҮҺІ]/.test(w)).slice(0, 2).map(w => w[0]).join('') || '•';
 
 // Вкладки внизу экрана: главная, переводы, защита. Если нужна карточка из аккордеона, она раскрывается.
 function showTab(name, focus) {
@@ -915,8 +957,19 @@ function renderMe() {
   const name = p.name.split(' (')[0];
   $('meName').textContent = name;
   $('avatar').textContent = (name.replace(/[«»"]/g, '').trim()[0] || '?').toUpperCase();
-  $('personaHint').textContent = T['hint_' + me] ? tr('hint_' + me) : '';
-  $('personaHint').hidden = !T['hint_' + me];
+  const story = (p.name.match(/\((.+)\)$/) || [])[1];
+  const hint = T['hint_' + me] ? sentences(tr('hint_' + me)) : [];
+  // История и первая фраза подсказки не повторяют друг друга: остаётся более подробная.
+  const norm = s => s.toLowerCase().replace(/[^\p{L}]/gu, '');
+  let showStory = !!story;
+  if (story && hint.length) {
+    if (norm(story).includes(norm(hint[0]))) hint.shift();
+    else if (norm(hint[0]).startsWith(norm(story))) showStory = false;
+  }
+  $('personaHint').innerHTML = (showStory ? `<b>${esc(story.replace(/\p{L}/u, ch => ch.toUpperCase()))}</b>` : '') +
+    (hint.length ? `<p>${esc(hint[0])}</p>` : '') +
+    (hint.length > 1 ? `<ul>${hint.slice(1).map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '');
+  $('personaHint').hidden = !showStory && !hint.length;
 }
 
 // Демо-вход: выбор персонажа открывает сессию этого клиента на сервере.
@@ -934,7 +987,8 @@ async function loadPeople() {
   people = await api('/demo/clients');
   // Под счетами в другом банке войти нельзя: они есть только среди получателей.
   const own = people.filter(p => !p.external), byId = Object.fromEntries(own.map(p => [p.id, p])), used = new Set();
-  const group = (label, ids) => ids.length ? `<optgroup label="${esc(label)}">${ids.map(i => `<option value="${i}">${esc(byId[i].name)}</option>`).join('')}</optgroup>` : '';
+  // В списке — короткие имена: что с персонажем случилось, видно в подсказке под списком.
+  const group = (label, ids) => ids.length ? `<optgroup label="${esc(label)}">${ids.map(i => `<option value="${i}">${esc(byId[i].name.split(' (')[0])}</option>`).join('')}</optgroup>` : '';
   $('who').innerHTML = GROUPS.map(([key, ids]) => {
     const here = ids.filter(i => byId[i]); here.forEach(i => used.add(i));
     return group(tr(key), here);
@@ -1066,14 +1120,43 @@ async function load() {
     const answer = !incoming && t.decision_comment ? `<div class="muted">${tr('bankAnswer')} ${esc(t.decision_comment)}</div>` : '';
     const report = !incoming && t.can_complain && !t.complained
       ? `<div><button class="link" data-report="${t.id}" style="padding:0;font-weight:500;color:var(--muted)">${tr('reportQ')}</button></div>` : '';
-    return `<div class="row"><span class="ico ${incoming ? 'in' : ''}">${incoming ? ARROW_IN : ARROW_OUT}</span>
+    const ico = t.cash ? CASH_ICON : t.loan ? '₸' : esc(initials(incoming ? t.sender : t.receiver));
+    return `<div class="row"><span class="ico ${incoming ? 'in' : ''}" aria-hidden="true">${ico}</span>
             <div class="body">${esc(title)}${open}
             <div class="muted">${esc(when(t.created_at))}</div>${tag ? `<span class="tag ${tag[0]}">${esc(tag[1])}</span>` : ''}${answer}${report}</div>
             <div class="amt ${incoming ? 'in' : ''}">${incoming ? '+' : '−'}${money(t.amount)}</div></div>`;
   }).join('') || `<div class="muted">${tr('noOps')}</div>`;
   $('feed').querySelectorAll('button[data-case]').forEach(b => b.onclick = async () => showStop(await api('/cases/' + b.dataset.case)));
   openFirstAcc();
+  compactAlerts();
   $('feed').querySelectorAll('button[data-report]').forEach(b => b.onclick = () => askReport(b));
+}
+
+// Главная: самое важное предупреждение (они идут по важности: звонок, отложенные операции, кредит, …) показано
+// целиком, остальные свёрнуты до заголовка. Раскрытые клиентом остаются раскрытыми при обновлении экрана.
+const openAlerts = new Set();
+function compactAlerts() {
+  [...document.querySelectorAll('[data-pane="home"] .alert')].forEach((a, i) => {
+    const h = a.querySelector(':scope > h2');
+    if (!h) return;
+    // Ключ — заголовок и первая строка: у двух «Возможно, это чужие деньги» заголовки одинаковые, суммы разные.
+    const key = h.textContent + '|' + ((a.querySelector(':scope > p') || {}).textContent || ''), compact = i > 0;
+    a.classList.toggle('compact', compact);
+    a.classList.toggle('open', compact && openAlerts.has(key));
+    if (compact) {
+      h.setAttribute('role', 'button'); h.tabIndex = 0;
+      h.setAttribute('aria-expanded', String(a.classList.contains('open')));
+      h.onclick = () => {
+        const on = a.classList.toggle('open');
+        h.setAttribute('aria-expanded', String(on));
+        openAlerts[on ? 'add' : 'delete'](key);
+      };
+      h.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); h.onclick(); } };
+    } else {
+      h.removeAttribute('role'); h.removeAttribute('tabindex'); h.removeAttribute('aria-expanded');
+      h.onclick = h.onkeydown = null;
+    }
+  });
 }
 
 // Предупреждение приходит вместе с деньгами, а не в момент, когда мошенник уже просит их переслать.
@@ -1085,17 +1168,16 @@ function renderAlerts(feed, recruit) {
     <div class="alert recruit">
       <h2>${tr('recruitH')}</h2>
       <p>${esc(tr('recruitText', {n: recruit.senders, m: money(recruit.amount)}))}</p>
-      <p>${tr('recruitScheme')}</p>
+      ${more(tr('recruitScheme') + ' ' + tr('recruitAfter'))}
       <div class="actions">
         <button class="primary" id="recruitReturn">${esc(tr('recruitReturn', {m: money(recruit.amount)}))}</button>
         <button class="soft" id="recruitKnown">${tr('recruitKnown')}</button>
       </div>
-      <p style="font-size:14px">${tr('recruitAfter')}</p>
     </div>` : '') + items.map(t => `
     <div class="alert ${t.complained ? 'hot' : ''}">
       <h2>${tr(t.complained ? 'alertHotH' : 'alertH')}</h2>
       <p>${esc(tr('alertFrom', {m: money(t.amount), who: t.sender}))} ${tr(t.complained ? 'alertHot' : 'alertNew')}</p>
-      ${t.complained ? '' : `<p>${tr('alertScheme')}</p>`}
+      ${t.complained ? '' : more(tr('alertScheme'))}
       <div class="actions">
         <button class="primary" data-return="${t.id}">${esc(tr('ret', {m: money(t.amount)}))}</button>
         ${t.complained ? '' : `<button class="soft" data-known="${t.id}">${tr('known')}</button>`}
@@ -1134,7 +1216,7 @@ function renderComplaints(items) {
       <p>${esc(tr('compLine', {m: money(p.amount), r: p.receiver}))}</p>
       <p><b>${esc(p.text)}</b></p>
       ${(p.banks || []).map(b => `<p>${esc(b)}</p>`).join('')}
-      ${p.stage !== 'returned' ? `<p>${tr('policeAbout')}</p>
+      ${p.stage !== 'returned' ? `${brief(tr('policeAbout'))}
         <a class="btn soft" href="/clients/${me}/police-statement/${p.id}" target="_blank" rel="noopener" id="police-${p.id}">${tr('policeOpen')}</a>` : ''}
     </div>`).join('');
 }
@@ -1156,7 +1238,7 @@ function renderSelf(rep, status) {
   }
   if (status === 'active') {
     const opt = (v, t, h) => `<label class="opt"><input type="radio" name="srKind" value="${v}"><span><b>${tr(t)}</b><span class="muted">${tr(h)}</span></span></label>`;
-    html += `<p class="muted"${rep ? ' style="margin-top:14px"' : ''}>${tr('srAbout')}</p>
+    html += `<div class="brief"${rep ? ' style="margin-top:14px"' : ''}>${brief(tr('srAbout'), {cls: 'muted'})}</div>
       <button class="soft" id="srOpen">${tr('srOpen')}</button>
       <div id="srForm" hidden>
         ${opt('card', 'srCard', 'srCardHint')}${opt('transit', 'srTransit', 'srTransitHint')}${opt('offer', 'srOffer', 'srOfferHint')}
@@ -1224,7 +1306,7 @@ async function loadGuardian() {
   const g = await api('/guardian').catch(() => null);
   if (!g || forWho !== me) return;
   const box = $('guardianCard');
-  let html = `<h2>${tr('guardianH')}</h2><p class="muted">${tr('guardianAbout')}</p>`;
+  let html = `<h2>${tr('guardianH')}</h2><div class="brief">${brief(tr('guardianAbout'), {cls: 'muted'})}</div>`;
   if (g.guardian) {
     html += `<p><b>${esc(tr('guardianNow', {g: g.guardian.name}))}</b></p>`;
     if (g.guardian.remove_at) {
@@ -1248,7 +1330,7 @@ function renderCooling(own, wards) {
   $('coolAlerts').innerHTML = own.map(t => `
     <div class="alert cool">
       <h2>${esc(tr('coolH', {t: hm(t.release_at)}))}</h2>
-      <p>${esc(tr('coolText', {m: money(t.amount), r: t.receiver}))}</p>
+      ${brief(tr('coolText', {m: money(t.amount), r: t.receiver}))}
       <div class="actions"><button class="primary" data-cool="${t.id}">${tr('coolCancel')}</button></div>
     </div>`).join('') + wards.map(t => `
     <div class="alert guard">
@@ -1273,17 +1355,17 @@ function renderCooling(own, wards) {
 let cashTimer = null;
 function cashAlert(w) {
   const m = money(w.amount);
-  const face = () => esc(tr(w.foreign_amount < w.amount ? 'cashFacePart' : 'cashFaceAll', {f: money(w.foreign_amount), m})) + ' ' + tr('cashFaceText');
+  const face = () => `<p>${esc(tr(w.foreign_amount < w.amount ? 'cashFacePart' : 'cashFaceAll', {f: money(w.foreign_amount), m}))}</p>` + more(tr('cashFaceText'));
   if (w.status === 'pending') return `<div class="alert hot"><h2>${esc(tr('cashDelayH', {m, t: hm(w.release_at)}))}</h2>
-      <p>${tr('cashDelayText')}</p>
+      ${brief(tr('cashDelayText'), {keepLast: true})}
       <div class="actions"><button class="primary" data-cash-cancel="${w.id}">${tr('cashCancel')}</button></div></div>`;
   if (w.release_at) return `<div class="alert cool"><h2>${esc(tr('cashReadyH', {m, t: hm(w.expires_at)}))}</h2>
-      <p>${tr('cashReadyText')}</p>${w.foreign_amount ? `<p>${face()}</p>` : ''}
+      <p>${tr('cashReadyText')}</p>${w.foreign_amount ? face() : ''}
       <div class="actions"><button class="primary" data-cash-take="${w.id}">${tr(w.foreign_amount ? 'cashFaceTake' : 'cashTake')}</button>
         <button class="soft" data-cash-cancel="${w.id}">${tr('cashCancel')}</button></div></div>`;
   const ret = w.return_incoming;
   return `<div class="alert hot"><h2>${tr('cashFaceH')}</h2>
-      <p>${face()}</p>
+      ${face()}
       <div class="actions">${ret ? `<button class="primary" data-cash-return="${w.id}" data-inc="${ret.id}">${esc(tr('ret', {m: money(ret.amount)}))}</button>` : ''}
         <button class="soft" data-cash-take="${w.id}">${tr('cashFaceTake')}</button>
         <button class="ghost" data-cash-cancel="${w.id}">${tr('cashCancel')}</button></div></div>`;
@@ -1370,7 +1452,7 @@ function renderTrainer() {
     html += `<div class="msgres ${lv}" style="margin-top:0"><h3>${esc(tr('trResult', {s: of(s.result.score, s.result.total)}))}</h3><p>${esc(s.result.text)}</p></div>
       <button class="primary" id="trStart">${tr('trAgain')}</button>`;
   } else if (s.i < 0) {
-    html += `<p class="muted">${tr('trAbout')}</p>` +
+    html += `<div class="brief">${brief(tr('trAbout'), {cls: 'muted'})}</div>` +
       (s.last ? `<p><b>${esc(tr('trLast', {s: of(s.last.score, s.last.total), d: dateText(s.last.at)}))}</b></p>` : '') +
       `<button class="primary" id="trStart">${tr(s.last ? 'trAgain' : 'trStart')}</button>`;
   } else {
@@ -1408,9 +1490,8 @@ function renderLoan(loan) {
   $('loanCard').innerHTML = loan ? `
     <div class="alert">
       <h2>${esc(tr('loanH', {m: money(loan.amount)}))}</h2>
-      <p>${tr('loanText')}</p>
+      ${brief(tr('loanText') + ' ' + tr('loanTerms'))}
       <div class="actions"><button class="primary" id="loanRepay">${esc(tr('loanRepay', {m: money(loan.amount)}))}</button></div>
-      <p style="font-size:14px">${tr('loanTerms')}</p>
     </div>` : '';
   if (loan) $('loanRepay').onclick = () => { $('loanRepay').disabled = true; repayLoan(loan.id); };
 }
@@ -1424,7 +1505,7 @@ function renderSafe(safe, status) {
   const box = $('safeCard');
   if (!safe || status === 'blocked') { box.hidden = true; return; }
   box.hidden = false;
-  let html = `<h2>${tr('safeH')}</h2><p class="muted">${tr('safeAbout')}</p>
+  let html = `<h2>${tr('safeH')}</h2><div class="brief">${brief(tr('safeAbout'), {cls: 'muted'})}</div>
     <p><b>${esc(tr('safeNow', {m: money(safe.amount)}))}</b></p>`;
   if (safe.unlock_at)
     html += `<div class="note err">${esc(tr('safeWait', {m: money(safe.unlock_amount), t: when(safe.unlock_at)}))}</div>
@@ -1452,7 +1533,7 @@ function renderCasino(r) {
     <div class="alert recruit">
       <h2>${tr('casinoH')}</h2>
       <p>${esc(tr('casinoText', {n: r.payers, m: money(r.inflow), k: r.payees, w: r.twoway}))}</p>
-      <p>${tr('casinoScheme')}</p>
+      ${more(tr('casinoScheme'))}
       <div class="actions"><button class="primary" id="casinoReport">${tr('rentalReport')}</button></div>
     </div>` : '';
   if (r) $('casinoReport').onclick = () => {
@@ -1471,7 +1552,7 @@ function renderOwnAccounts(items) {
     <div class="alert hot">
       <h2>${tr('idH')}</h2>
       <p>${esc(tr('idText', {d: dateText(a.opened_at), m: a.device || '?', s: money(a.inflow), n: a.senders}))}${a.own_device ? '' : ' ' + tr('idForeign')}</p>
-      <p>${tr('idAsk')}</p>
+      ${brief(tr('idAsk'))}
       <div class="actions"><button class="primary" data-claim="${a.id}" data-answer="not_me">${tr('idNotMe')}</button>
         <button class="soft" data-claim="${a.id}" data-answer="mine">${tr('idMine')}</button></div>
     </div>`).join('');
@@ -1511,7 +1592,7 @@ function renderRental(r) {
     <div class="alert recruit">
       <h2>${tr('rentalH')}</h2>
       <p>${esc(tr('rentalText', {n: r.payers, m: money(r.inflow), p: r.share}))}</p>
-      <p>${tr('rentalScheme')}</p>
+      ${more(tr('rentalScheme'))}
       <div class="actions"><button class="primary" id="rentalReport">${tr('rentalReport')}</button></div>
     </div>` : '';
   if (r) $('rentalReport').onclick = () => {
@@ -1599,8 +1680,9 @@ $('to').onchange = checkRecipient;
 let callOn = false;
 function renderCall(call) {
   callOn = !!call;
-  $('callAlert').innerHTML = call ? `<div class="alert call"><h2>${tr('callH')}</h2><p>${esc(tr('callText', {n: call.number}))}</p></div>` : '';
+  $('callAlert').innerHTML = call ? `<div class="alert call"><h2>${tr('callH')}</h2>${brief(tr('callText', {n: call.number}), {keepLast: true})}</div>` : '';
   $('callToggle').textContent = tr(callOn ? 'demoCallOff' : 'demoCallOn');
+  compactAlerts();
 }
 $('callToggle').onclick = async () => {
   const r = await api('/telecom/signal', {active: !callOn}).catch(e => { note(e.message, 'err'); return undefined; });
@@ -1645,6 +1727,7 @@ $('repayLoan').onclick = () => { $('overlay').classList.remove('show'); repayLoa
 $('later').onclick = () => { $('overlay').classList.remove('show'); load(); };
 // При смене клиента сразу убираем экран прежнего: иначе можно успеть нажать кнопку в чужом случае.
 function clearScreen() {
+  openAlerts.clear();
   note(''); appeal = null; held = null;
   $('overlay').classList.remove('show');
   $('alerts').innerHTML = ''; $('blockCard').innerHTML = ''; $('blockCard').hidden = true;
