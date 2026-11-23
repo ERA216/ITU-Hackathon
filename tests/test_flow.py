@@ -1,6 +1,7 @@
 """Сквозные тесты. Каждый тест получает свою копию базы, порядок запуска не важен."""
 import base64
 import os
+import re
 import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -1982,6 +1983,24 @@ def test_landing_client_screen_and_tour_script_are_served():
     for page in ("/client", "/analyst", "/analyst/stats", "/quality"):
         html = c.get(page).text
         assert 'href="/client"' in html and 'class="brand" href="/"' in html, page
+
+
+def test_font_is_served_from_our_server():
+    """Шрифт Roboto Flex лежит на нашем сервере: страницы ничего не загружают из интернета."""
+    c = TestClient(main.app)
+    css = c.get("/fonts/fonts.css")
+    assert css.status_code == 200 and css.headers["content-type"].startswith("text/css")
+    files = set(re.findall(r"url\(/fonts/([\w.-]+\.woff2)\)", css.text))
+    assert len(files) == 4
+    for name in files:
+        r = c.get(f"/fonts/{name}")
+        assert r.status_code == 200 and r.headers["content-type"] == "font/woff2" and r.content[:4] == b"wOF2", name
+        assert "max-age" in r.headers["cache-control"]
+    assert "Open Font License" in c.get("/fonts/OFL.txt").text
+    for bad in ("..%2Fmain.py", "nope.woff2", "main.py"):
+        assert c.get(f"/fonts/{bad}").status_code == 404, bad
+    for page in ("/", "/client", "/analyst", "/analyst/stats", "/quality", "/verify/ZZZZ"):
+        assert 'href="/fonts/fonts.css"' in c.get(page).text, page
 
 
 # ---------- «Светофор получателя» и группы персонажей ----------

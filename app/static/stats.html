@@ -4,23 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z' fill='%2300ab75'/%3E%3Cpath d='m8.5 12 2.5 2.5 4.5-5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/roboto-flex-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/roboto-flex-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
 <title>Чистый счёт: эффективность</title>
 <style>
-  :root { --bg:#fff; --card:#fff; --ink:#1d1d1e; --ink2:#2f4a3f; --muted:#587366; --line:#d6eadf; --grid:#e3f0ea;
+  :root { --bg:#f5f5fa; --card:#fff; --ink:#1d1d1e; --ink2:#2f4a3f; --muted:#587366; --line:#d6eadf; --grid:#e3f0ea;
           --brand:#00ab75; --warn:#c62828; --warn-bg:#fdeeee; --amber-bg:#fff5df; --amber:#6b4a00; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 "Roboto Flex", Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 "Roboto Flex", Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; font-variant-numeric:tabular-nums; }
   header { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; padding:14px 16px; background:#fff; border-bottom:1px solid var(--line); }
   header b { color:var(--ink); font-size:17px; font-weight:700; }
   header a { color:var(--muted); font-size:14px; margin-left:14px; text-decoration:none; }
   header a:hover { color:var(--ink); }
   main { max-width:1040px; margin:0 auto; padding:16px; }
-  h1 { font-size:22px; margin:6px 0 4px; }
-  h2 { font-size:16px; margin:0 0 10px; }
+  h1 { font-size:28px; line-height:1.2; letter-spacing:-.015em; margin:12px 0 6px; }
+  /* Разделы и показатели — короткими подписями, как в рабочих программах. */
+  h2 { font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin:0 0 10px; }
   .lead { color:var(--ink2); margin:0 0 14px; max-width:780px; }
   .muted { color:var(--muted); font-size:13px; }
   .note { background:var(--amber-bg); color:var(--amber); border-radius:12px; padding:10px 14px; font-size:14px; margin-bottom:14px; }
-  .group { background:var(--card); border:1px solid #d6eadf; border-radius:16px; padding:16px; margin-bottom:14px; }
+  .group { background:var(--card); border:0; border-radius:16px; padding:16px; margin-bottom:14px; }
   /* Журнал действий: проверка, что записи не меняли задним числом. */
   .jstate { border-radius:12px; padding:10px 14px; font-size:14px; margin:10px 0; }
   .jstate.ok { background:#e6f7f0; color:#00875c; } .jstate.bad { background:var(--warn-bg); color:var(--warn); }
@@ -30,10 +34,11 @@
   /* Калькулятор эффекта для банка. */
   .calc { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:12px 16px; margin:12px 0 16px; }
   .calc label { display:block; color:var(--muted); font-size:13px; margin-bottom:4px; }
-  .calc input { width:100%; padding:10px 12px; border:1px solid transparent; border-radius:12px; background:#e6f3ed; font:inherit; color:var(--ink); }
+  .calc input { width:100%; padding:10px 12px; border:1px solid transparent; border-radius:12px; background:#f2f3f7; font:inherit; color:var(--ink); }
   .calc input:focus { outline:none; border-color:#00ab75; background:#fff; }
-  .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:16px; }
-  .tile .label { color:var(--muted); font-size:13px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:20px 24px; }
+  .tile { border-top:1px solid var(--line); padding-top:12px; }
+  .tile .label { color:var(--muted); font-size:12px; font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
   .tile .value { font-size:28px; font-weight:650; font-variant-numeric:tabular-nums; line-height:1.2; margin:2px 0; }
   .tile .sub, td .sub { color:var(--ink2); font-size:13px; }
   .chart { position:relative; }
@@ -42,8 +47,8 @@
   .tip { position:absolute; pointer-events:none; background:var(--ink); color:#fff; font-size:13px; padding:6px 9px;
          border-radius:8px; white-space:nowrap; transform:translate(-50%, -100%); display:none; }
   table { width:100%; border-collapse:collapse; font-size:14px; }
-  th, td { text-align:left; padding:6px; border-top:1px solid var(--line); }
-  th { color:var(--muted); font-weight:600; font-size:13px; border-top:0; }
+  th, td { text-align:left; padding:8px 6px; border-top:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; font-size:12px; letter-spacing:.06em; text-transform:uppercase; border-top:0; }
   td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
   details { margin-top:8px; }
   summary { cursor:pointer; color:var(--muted); font-size:13px; }
@@ -51,7 +56,6 @@
   /* Главное сверху: четыре крупные цифры. */
   .tiles.top { grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); }
   .tiles.top .value { font-size:clamp(24px, 3.2vw, 34px); }
-  .tiles.top .label { color:var(--ink2); font-size:14px; }
   /* Остальные показатели — разделы, свёрнутые под заголовком. */
   .sections { padding:0; }
   .sections details { margin:0; }

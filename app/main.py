@@ -493,6 +493,22 @@ def tour_script():
     return FileResponse(os.path.join(STATIC, "tour.js"), media_type="text/javascript")
 
 
+FONTS = os.path.join(STATIC, "fonts")
+FONT_FILES = set(os.listdir(FONTS))
+FONT_TYPES = {".woff2": "font/woff2", ".css": "text/css; charset=utf-8", ".txt": "text/plain; charset=utf-8"}
+
+
+@app.get("/fonts/{name}", include_in_schema=False)
+def font_file(name: str):
+    """Шрифт Roboto Flex с нашего сервера: страницы ничего не загружают из интернета."""
+    ext = os.path.splitext(name)[1]
+    if name not in FONT_FILES or ext not in FONT_TYPES:
+        raise HTTPException(404)
+    # Файлы шрифта не меняются (при замене меняется имя), браузер может хранить их неделю.
+    headers = {"Cache-Control": "public, max-age=604800"} if ext == ".woff2" else None
+    return FileResponse(os.path.join(FONTS, name), media_type=FONT_TYPES[ext], headers=headers)
+
+
 def _refresh_status(cid: int) -> str:
     """Статус счёта по нерешённым блокировкам: полная закрывает счёт, соразмерная замораживает спорную сумму.
 
@@ -1513,9 +1529,10 @@ def _clearance_view(case_id: int) -> dict | None:
 
 def _page(title: str, body: str) -> RawResponse:
     html_doc = f"""<!DOCTYPE html><html lang="{i18n.lang.get()}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z' fill='%2300ab75'/%3E%3Cpath d='m8.5 12 2.5 2.5 4.5-5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"><title>{escape(title)}</title>
-<style>body{{margin:0;background:#fff;color:#1d1d1e;font:16px/1.5 "Roboto Flex",Roboto,"Segoe UI",system-ui,-apple-system,sans-serif}}
-main{{max-width:720px;margin:24px auto;background:#fff;border:1px solid #d6eadf;border-radius:16px;padding:28px 24px}}
+<meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z' fill='%2300ab75'/%3E%3Cpath d='m8.5 12 2.5 2.5 4.5-5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"><link rel="stylesheet" href="/fonts/fonts.css"><title>{escape(title)}</title>
+<style>body{{margin:0;background:#f5f5fa;color:#1d1d1e;font:16px/1.5 "Roboto Flex",Roboto,"Segoe UI",system-ui,-apple-system,sans-serif}}
+main{{max-width:720px;margin:24px auto;background:#fff;border:0;border-radius:16px;padding:28px 24px}}
+@media (max-width:752px){{main{{margin:16px;padding:22px 18px}}}}
 h1{{font-size:22px;margin:0 0 4px;color:#1d1d1e}} .muted{{color:#587366;font-size:14px}}
 .ok{{background:#e6f7f0;color:#00875c;border-radius:12px;padding:12px 14px;font-weight:600}}
 .bad{{background:#fdeeee;color:#c62828;border-radius:12px;padding:12px 14px;font-weight:600}}

@@ -4,10 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z' fill='%2300ab75'/%3E%3Cpath d='m8.5 12 2.5 2.5 4.5-5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/roboto-flex-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/roboto-flex-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
 <title>Чистый счёт</title>
 <style>
   /* Цвета и формы как в приложении bcc.kz: светлый мятный фон, белые карточки, зелёный акцент. */
-  :root { --bg:#fff; --card:#fff; --ink:#1d1d1e; --ink2:#00875c; --muted:#587366; --line:#d6eadf; --fill:#e6f3ed;
+  :root { --bg:#f5f5fa; --card:#fff; --ink:#1d1d1e; --ink2:#00875c; --muted:#587366; --line:#d6eadf; --fill:#f2f3f7;
           --brand:#00ab75; --brand-ink:#00875c; --brand-bg:#e6f7f0;
           --warn:#c62828; --warn-bg:#fdeeee; --amber:#6b4a00; --amber-bg:#fff5df; --blue:#1f3a8a; --blue-bg:#eef2fd;
           --ok:#00875c; --ok-bg:#e6f7f0; }
@@ -22,7 +25,7 @@
   select, input { width:100%; padding:12px 14px; border:1px solid transparent; border-radius:12px; background:var(--fill); }
   select:focus, input:focus, textarea:focus { outline:none; border-color:var(--brand); background:#fff; }
   header select { width:auto; max-width:62%; padding:8px 12px; font-size:14px; font-weight:500; background:#fff; border-radius:20px; }
-  .card { background:var(--card); border:1px solid #d6eadf; border-radius:16px; padding:16px; margin-bottom:12px; }
+  .card { background:var(--card); border:0; border-radius:16px; padding:16px; margin-bottom:12px; }
   .balance { font-size:32px; font-weight:700; letter-spacing:-.02em; font-variant-numeric:tabular-nums; margin:2px 0; }
   .muted { color:var(--muted); font-size:14px; }
   h2 { font-size:18px; font-weight:700; margin:0 0 12px; letter-spacing:-.01em; }
@@ -83,7 +86,7 @@
   .tag.warn { background:var(--amber-bg); color:var(--amber); }
   .confirm { margin-top:6px; font-size:14px; }
   .confirm button { width:auto; padding:7px 12px; font-size:14px; margin:6px 6px 0 0; }
-  .langs { display:flex; gap:2px; background:var(--line); border-radius:20px; padding:3px; }
+  .langs { display:flex; gap:2px; background:#fff; border-radius:20px; padding:3px; }
   .langs button { width:auto; padding:5px 12px; font-size:13px; font-weight:500; border-radius:16px; background:none; color:var(--muted); }
   .langs button[aria-pressed="true"] { background:var(--ink2); color:#fff; }
   .demo { border:1px dashed #b9dccb; border-radius:16px; padding:14px; margin-top:4px; }
@@ -122,11 +125,11 @@
   .examples button.soft { background:var(--amber-bg); color:var(--amber); }
   .examples button.soft:hover { background:#ffeec2; }
   /* Раскладка: слева подсказки для показа, справа телефон с экраном клиента. */
-  body { background:#fff; }
+  body { background:var(--bg); }
   .app { display:flex; gap:32px; justify-content:center; align-items:flex-start; padding:24px; }
   .demo-panel { width:330px; flex:none; position:sticky; top:24px; }
   .demo-toggle { display:none; }
-  .demo-body { background:#fff; border:1px solid #d6eadf; border-radius:20px; padding:20px; }
+  .demo-body { background:#fff; border:0; border-radius:20px; padding:20px; }
   .demo-title { font-size:20px; font-weight:700; margin-bottom:4px; }
   .demo-body .muted { font-size:13px; }
   .demo-body p { margin:4px 0 0; }
@@ -157,9 +160,9 @@
   .quick { display:grid; grid-template-columns:repeat(3, 1fr); gap:8px; margin-top:16px; }
   .quick button { background:none; padding:0; display:flex; flex-direction:column; align-items:center; gap:6px;
                   font-size:12px; font-weight:500; color:var(--ink); line-height:1.2; }
-  .quick .ic { width:48px; height:48px; border-radius:14px; background:var(--brand-bg); color:var(--brand-ink);
+  .quick .ic { width:48px; height:48px; border-radius:14px; background:var(--fill); color:var(--brand-ink);
                display:flex; align-items:center; justify-content:center; }
-  .quick button:hover .ic { background:#d5f1e6; }
+  .quick button:hover .ic { background:#e7e9f0; }
   svg.i { width:22px; height:22px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
   .tabbar { display:flex; background:#fff; border-top:1px solid var(--line); padding:6px 6px 12px; flex:none; }
   .tabbar button { flex:1; background:none; padding:6px 0 0; display:flex; flex-direction:column; align-items:center; gap:3px;
@@ -198,7 +201,7 @@
   .brief > p:first-child { margin-top:0; }
   .brief > p { margin-bottom:4px; }
   /* Вкладки «Переводы» и «Защита» — аккордеон: открыта одна карточка, у остальных видны заголовок и строка о том, что внутри. */
-  .acc { background:#fff; border:1px solid #d6eadf; border-radius:16px; margin-bottom:12px; }
+  .acc { background:#fff; border:0; border-radius:16px; margin-bottom:12px; }
   .acc:not(:has(> .acc-item > .card:not([hidden]))) { display:none; }
   .acc-item + .acc-item { border-top:1px solid var(--line); }
   .acc-item:has(> .card[hidden]) { display:none; }

@@ -4,9 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z' fill='%2300ab75'/%3E%3Cpath d='m8.5 12 2.5 2.5 4.5-5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/roboto-flex-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/roboto-flex-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
 <title>Чистый счёт: качество движка</title>
 <style>
-  :root { --bg:#fff; --card:#fff; --ink:#1d1d1e; --ink2:#2f4a3f; --muted:#587366; --line:#d6eadf; --grid:#e3f0ea;
+  :root { --bg:#f5f5fa; --card:#fff; --ink:#1d1d1e; --ink2:#2f4a3f; --muted:#587366; --line:#d6eadf; --grid:#e3f0ea;
           --brand:#00ab75; --band:rgba(0,171,117,.14); --mark:#1d1d1e; --warn:#c62828; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 "Roboto Flex", Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; }
@@ -20,10 +23,10 @@
   h2 { font-size:16px; margin:0 0 2px; }
   .lead { color:var(--ink2); margin:0 0 16px; max-width:760px; }
   .muted { color:var(--muted); font-size:13px; }
-  .card { background:var(--card); border:1px solid #d6eadf; border-radius:16px; padding:16px; margin-bottom:14px; }
+  .card { background:var(--card); border:0; border-radius:16px; padding:16px; margin-bottom:14px; }
   .tiles { display:grid; grid-template-columns:repeat(3, 1fr); gap:12px; margin-bottom:14px; }
   @media (max-width:720px) { .tiles { grid-template-columns:1fr; } }
-  .tile { background:var(--card); border:1px solid #d6eadf; border-radius:16px; padding:14px 16px; }
+  .tile { background:var(--card); border:0; border-radius:16px; padding:14px 16px; }
   .tile .label { color:var(--muted); font-size:13px; }
   .tile .value { font-size:28px; font-weight:650; font-variant-numeric:tabular-nums; line-height:1.2; }
   .tile .range { color:var(--ink2); font-size:13px; }
@@ -39,7 +42,7 @@
   td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
   .barcell { width:34%; }
   /* Настройка весов: поле баллов и выделенный признак. */
-  #tuneTable input { width:72px; padding:6px 8px; border:1px solid transparent; border-radius:10px; background:#e6f3ed; font:inherit; text-align:right; }
+  #tuneTable input { width:72px; padding:6px 8px; border:1px solid transparent; border-radius:10px; background:#f2f3f7; font:inherit; text-align:right; }
   #tuneTable input:focus { outline:none; border-color:#00ab75; background:#fff; }
   #tuneTable tr.pick td { background:#e6f7f0; }
   .tunebtn { margin-top:12px; border:1px solid #00ab75; background:#fff; color:#00875c; border-radius:20px; padding:8px 14px; font:inherit; font-size:14px; font-weight:500; cursor:pointer; }

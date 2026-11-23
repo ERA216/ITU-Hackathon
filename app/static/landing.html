@@ -4,11 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z' fill='%2300ab75'/%3E%3Cpath d='m8.5 12 2.5 2.5 4.5-5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preload" href="/fonts/roboto-flex-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/roboto-flex-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/fonts/fonts.css">
 <title>Чистый счёт</title>
 <style>
-  :root { --ink:#1d1d1e; --ink2:#2f4a3f; --muted:#587366; --line:#d6eadf; --brand:#00ab75; --brand-ink:#00875c; --fill:#e6f3ed; }
+  :root { --ink:#1d1d1e; --ink2:#2f4a3f; --muted:#587366; --line:#d6eadf; --brand:#00ab75; --brand-ink:#00875c; --fill:#f2f3f7; }
   * { box-sizing:border-box; }
-  body { margin:0; background:#fff; color:var(--ink); font:16px/1.5 "Roboto Flex", Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; }
+  body { margin:0; background:#f5f5fa; color:var(--ink); font:16px/1.5 "Roboto Flex", Roboto, "Segoe UI", system-ui, -apple-system, sans-serif; }
   /* Общее верхнее меню: четыре страницы проекта. */
   .topbar { display:flex; justify-content:flex-start; align-items:center; gap:16px; flex-wrap:wrap; padding:10px 20px; background:#fff; border-bottom:1px solid #d6eadf; }
   .topbar .brand { font-weight:700; font-size:17px; color:#1d1d1e; text-decoration:none; white-space:nowrap;
@@ -23,45 +26,61 @@
     .pages { order:3; width:100%; display:grid; grid-template-columns:1fr 1fr; }
     .pages a { text-align:center; padding:7px 8px; border-radius:11px; }
   }
-  main { max-width:1040px; margin:0 auto; padding:20px 16px 40px; }
-  .card { background:#fff; border:1px solid var(--line); border-radius:16px; padding:20px; margin-bottom:16px; }
-  h1 { font-size:30px; line-height:1.2; margin:0 0 8px; }
-  h2 { font-size:19px; margin:0 0 12px; }
-  h3 { font-size:16px; margin:0 0 6px; }
+  main { max-width:1080px; margin:0 auto; padding:0 20px 64px; }
+  .card { background:#fff; border:0; border-radius:16px; padding:24px; }
+  h1 { font-size:46px; line-height:1.08; letter-spacing:-.025em; font-weight:700; margin:0 0 18px; }
+  h2 { font-size:28px; line-height:1.2; letter-spacing:-.015em; margin:0 0 20px; }
+  h3 { font-size:17px; line-height:1.3; margin:0 0 8px; }
   p { margin:8px 0; }
   .muted { color:var(--muted); font-size:14px; }
-  .lead { font-size:18px; color:var(--ink2); max-width:760px; }
-  .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; }
+  .block { margin-top:64px; }
+  .actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:24px; }
   .btn { display:inline-block; border-radius:12px; padding:12px 18px; font:inherit; font-weight:500; text-decoration:none; cursor:pointer; border:1px solid var(--brand); color:var(--brand-ink); background:#fff; }
   .btn:hover { background:#e6f7f0; }
   .btn.main { background:var(--brand); color:#fff; }
   .btn.main:hover { background:#009d6b; }
-  .tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:16px; }
-  .tile .value { font-size:30px; font-weight:650; line-height:1.2; font-variant-numeric:tabular-nums; }
-  .tile .label { color:var(--ink2); font-size:14px; }
-  .steps { display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); gap:16px; }
-  .step { background:var(--fill); border-radius:14px; padding:16px; }
-  .step b.n { display:inline-block; width:26px; height:26px; line-height:26px; text-align:center; border-radius:50%; background:var(--brand); color:#fff; font-size:14px; margin-right:6px; }
+  /* Первый экран без карточки: крупный заголовок слева, справа экран приложения в момент остановки перевода. */
+  .hero { display:grid; grid-template-columns:minmax(0, 1fr) 290px; gap:56px; align-items:center; padding:56px 0 48px; }
+  .eyebrow { display:block; color:var(--brand-ink); font-size:15px; font-weight:600; margin-bottom:14px; }
+  .lead { font-size:19px; line-height:1.5; max-width:600px; margin:0 0 12px; }
+  .story { color:var(--ink2); max-width:600px; }
+  /* Главные цифры — строкой с тонкими разделителями, без карточек. */
+  .facts { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); border-top:1px solid #e1e1ea; border-bottom:1px solid #e1e1ea; }
+  .fact { padding:20px 20px 22px; border-left:1px solid #e1e1ea; }
+  .fact:first-child { border-left:0; padding-left:0; }
+  .fact b { display:block; font-size:30px; line-height:1.15; font-weight:650; letter-spacing:-.01em; font-variant-numeric:tabular-nums; margin-bottom:6px; }
+  .fact span { display:block; color:var(--ink2); font-size:14px; line-height:1.45; }
+  .steps { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:16px; }
+  .step .n { display:block; color:var(--brand-ink); font-size:14px; font-weight:600; margin-bottom:28px; }
+  .step p { margin:0; color:var(--ink2); }
   .themes { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:16px; }
-  .theme { border:1px solid var(--line); border-radius:14px; padding:16px; }
-  .theme ul { margin:8px 0 0; padding-left:18px; }
-  .theme li { margin:4px 0; }
+  .theme ul { margin:10px 0 0; padding-left:18px; }
+  .theme li { margin:6px 0; }
   .theme li span { color:var(--muted); font-size:14px; }
-  ul.plain { padding-left:18px; margin:8px 0; }
-  ul.plain li { margin:6px 0; }
-  /* Первый экран: слева о проекте, справа экран приложения в момент остановки перевода (та же вёрстка, что у клиента). */
-  .hero { display:grid; grid-template-columns:minmax(0, 1fr) 290px; gap:36px; align-items:center; }
-  .hero .lead { margin-bottom:14px; }
-  @media (max-width:760px) { .hero { grid-template-columns:1fr; } .mock { justify-self:center; } }
+  ul.plain { padding-left:18px; margin:0; }
+  ul.plain li { margin:8px 0; max-width:820px; }
+  @media (max-width:760px) {
+    h1 { font-size:34px; }
+    h2 { font-size:24px; }
+    .lead { font-size:17px; }
+    .block { margin-top:44px; }
+    .hero { grid-template-columns:1fr; gap:32px; padding:32px 0 36px; }
+    .mock { justify-self:center; }
+    .facts { grid-template-columns:1fr 1fr; }
+    .fact:nth-child(3) { border-left:0; padding-left:0; }
+    .fact:nth-child(n+3) { border-top:1px solid #e1e1ea; }
+    .steps { grid-template-columns:1fr; }
+    .step .n { margin-bottom:10px; }
+  }
   .mock { margin:0; width:290px; }
-  .mock-screen { position:relative; height:540px; border:10px solid #0f3d2e; border-radius:38px; overflow:hidden; background:#fff;
+  .mock-screen { position:relative; height:540px; border:10px solid #0f3d2e; border-radius:38px; overflow:hidden; background:#f5f5fa;
                  font-size:13px; line-height:1.4; }
   .mock-top { display:flex; gap:10px; align-items:center; padding:16px 16px 10px; }
   .mock-ava { width:34px; height:34px; flex:none; border-radius:50%; background:#e6f7f0; color:var(--brand-ink); display:flex;
               align-items:center; justify-content:center; font-weight:700; }
   .mock small { display:block; color:var(--muted); font-size:11px; }
   .mock-top b { font-size:15px; }
-  .mock-card { margin:0 12px; border:1px solid var(--line); border-radius:14px; padding:12px 14px; }
+  .mock-card { margin:0 12px; background:#fff; border:0; border-radius:14px; padding:12px 14px; }
   .mock-card b { font-size:24px; }
   .mock-dim { position:absolute; inset:0; background:rgba(10,48,36,.45); }
   .mock-sheet { position:absolute; left:0; right:0; bottom:0; background:#fff; border-radius:22px 22px 0 0; padding:10px 14px 14px; }
@@ -79,12 +98,12 @@
 <header class="topbar"><a class="brand" href="/"><svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z" fill="#00ab75"/><path d="m8.5 12 2.5 2.5 4.5-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Чистый счёт</a>
   <nav class="pages" aria-label="Страницы проекта"><a href="/client">Экран клиента</a><a href="/analyst">Панель аналитика</a><a href="/analyst/stats">Эффективность</a><a href="/quality">Качество движка</a></nav></header>
 <main>
-  <section class="card hero" id="hero">
+  <section class="hero" id="hero">
     <div>
-      <h1>Чистый счёт</h1>
-      <p class="lead">Защищаем честных клиентов банка от статуса дроппера и помогаем банку находить настоящих дропперов.</p>
-      <p>Мошенники переводят человеку «по ошибке» чужие деньги и просят вернуть их на другую карту — так студент или продавец становится звеном схемы, а потом его счёт блокируют. С 2025 года в Казахстане заблокированы сотни тысяч дропперских счетов, и среди них много невольных участников.</p>
-      <p>Прототип для приложения и панели сотрудника Банка ЦентрКредит: предупреждает о чужих деньгах, останавливает пересылку и честно отличает невольного участника от организатора.</p>
+      <span class="eyebrow">Чистый счёт</span>
+      <h1>Защищаем честных клиентов от статуса дроппера</h1>
+      <p class="lead">Прототип для приложения и панели сотрудника Банка ЦентрКредит: предупреждает о чужих деньгах, останавливает пересылку и честно отличает невольного участника от организатора.</p>
+      <p class="story">Мошенники переводят человеку «по ошибке» чужие деньги и просят вернуть их на другую карту — так студент или продавец становится звеном схемы, а потом его счёт блокируют. С 2025 года в Казахстане заблокированы сотни тысяч дропперских счетов, и среди них много невольных участников.</p>
       <div class="actions">
         <button class="btn main" id="tourStart">Показ за 3 минуты</button>
         <a class="btn" href="/client">Экран клиента</a>
@@ -113,54 +132,52 @@
     </figure>
   </section>
 
-  <section class="card">
-    <div class="tiles">
-      <div class="tile"><div class="value">88%</div><div class="label">переводов дропперам останавливает движок на синтетических данных</div></div>
-      <div class="tile"><div class="value">0,20%</div><div class="label">честных переводов останавливает зря; клиент сразу видит причину</div></div>
-      <div class="tile"><div class="value">5 из 5</div><div class="label">тем кейса БЦК: антифрод, данные, кибербезопасность, операции, сервисы — и рабочие процессы банка</div></div>
-      <div class="tile"><div class="value">ru + kk</div><div class="label">все тексты для клиента на русском и казахском</div></div>
-    </div>
+  <section class="facts" aria-label="Главные цифры">
+    <div class="fact"><b>88%</b><span>переводов дропперам останавливает движок на синтетических данных</span></div>
+    <div class="fact"><b>0,20%</b><span>честных переводов останавливает зря; клиент сразу видит причину</span></div>
+    <div class="fact"><b>5 из 5</b><span>тем кейса БЦК: антифрод, данные, кибербезопасность, операции, сервисы — и рабочие процессы банка</span></div>
+    <div class="fact"><b>ru + kk</b><span>все тексты для клиента на русском и казахском</span></div>
   </section>
 
-  <section class="card">
+  <section class="block">
     <h2>Как это работает</h2>
     <div class="steps">
-      <div class="step"><h3><b class="n">1</b>Предупредить</h3><p>Пришли деньги от незнакомца — приложение сразу говорит: возможно, это чужие деньги, и даёт вернуть их отправителю одной кнопкой.</p></div>
-      <div class="step"><h3><b class="n">2</b>Остановить</h3><p>Если мошенник уговаривает переслать деньги дальше, перевод останавливается с объяснением. Так же — звонок «из банка», «встречный кредит», перевод под диктовку.</p></div>
-      <div class="step"><h3><b class="n">3</b>Разобраться честно</h3><p>По жалобе система идёт по цепочке: у невольного участника замораживает только спорную сумму, апелляция — прямо в приложении, со сроком ответа.</p></div>
+      <div class="card step"><span class="n">Шаг 1</span><h3>Предупредить</h3><p>Пришли деньги от незнакомца — приложение сразу говорит: возможно, это чужие деньги, и даёт вернуть их отправителю одной кнопкой.</p></div>
+      <div class="card step"><span class="n">Шаг 2</span><h3>Остановить</h3><p>Если мошенник уговаривает переслать деньги дальше, перевод останавливается с объяснением. Так же — звонок «из банка», «встречный кредит», перевод под диктовку.</p></div>
+      <div class="card step"><span class="n">Шаг 3</span><h3>Разобраться честно</h3><p>По жалобе система идёт по цепочке: у невольного участника замораживает только спорную сумму, апелляция — прямо в приложении, со сроком ответа.</p></div>
     </div>
   </section>
 
-  <section class="card">
+  <section class="block">
     <h2>Что сделано: пять тем кейса и рабочие процессы банка</h2>
     <div class="themes">
-      <div class="theme"><h3>Выявление мошенничества и антифрод</h3><ul>
+      <div class="card theme"><h3>Выявление мошенничества и антифрод</h3><ul>
         <li>Перехват пересылки чужих денег, дробления и «сбора» <span>— Айдана, Руслан</span></li>
         <li>«Аренда ИП» и касса онлайн-казино <span>— ИП Нурлан, Самат</span></li>
         <li>Дроп-фермы и сети дропперов <span>— вкладка «Сети»</span></li>
         <li>«Встречный кредит» <span>— Болат</span></li></ul></div>
-      <div class="theme"><h3>Защита клиентов и финансовых данных</h3><ul>
+      <div class="card theme"><h3>Защита клиентов и финансовых данных</h3><ul>
         <li>«Возможно, это чужие деньги» и возврат одной кнопкой <span>— Айдана</span></li>
         <li>«Сейф» для сбережений, доверенное лицо, период охлаждения <span>— Мама</span></li>
         <li>«Счёт открыли без меня» <span>— Венера</span></li>
         <li>Скрытые ИИН и телефон, «Кто смотрел мои данные» <span>— вкладка «Защита»</span></li></ul></div>
-      <div class="theme"><h3>Кибербезопасность банковских систем</h3><ul>
+      <div class="card theme"><h3>Кибербезопасность банковских систем</h3><ul>
         <li>Журнал действий, который нельзя подделать задним числом <span>— «Эффективность»</span></li>
         <li>Правило двух ключей для крупных действий сотрудников <span>— панель аналитика</span></li>
         <li>Шифрование документов, защита входа, запрет встраивания страниц</li></ul></div>
-      <div class="theme"><h3>Безопасность финансовых операций</h3><ul>
+      <div class="card theme"><h3>Безопасность финансовых операций</h3><ul>
         <li>Перевод под диктовку: разговор, вставка реквизитов, ссылка из мессенджера <span>— Мама</span></li>
         <li>Сигнал оператора о звонке, списки Антифрод-центра <span>— Мама</span></li>
         <li>Соразмерная блокировка вместо закрытия всего счёта <span>— Данияр</span></li>
         <li>Снятие наличных без карты: чужие деньги — только по лицу, крупное снятие во время звонка — через час <span>— Ерлан, Мама</span></li>
         <li>Проверка QR-кода перед оплатой: подменённый код на парковке виден сразу <span>— вкладка «Переводы»</span></li></ul></div>
-      <div class="theme"><h3>Новые цифровые сервисы</h3><ul>
+      <div class="card theme"><h3>Новые цифровые сервисы</h3><ul>
         <li>Апелляция в приложении со сроком ответа и справка с проверкой по коду <span>— Данияр</span></li>
         <li>«Меня втянули в схему»: сообщить банку самому <span>— Тимур</span></li>
         <li>Статус жалобы для пострадавшего, жалоба через другой банк <span>— Гульнар, Сауле</span></li>
         <li>Проверка подозрительного сообщения <span>— любой персонаж</span></li>
         <li>Тренажёр против мошенников: 8 ситуаций с объяснением <span>— вкладка «Защита»</span></li></ul></div>
-      <div class="theme"><h3>Рабочие процессы банка</h3><ul>
+      <div class="card theme"><h3>Рабочие процессы банка</h3><ul>
         <li>Карточка случая с графом денег и подсказкой «невольный участник или организатор»</li>
         <li>Эффективность: сохранено, «Не пришлось возмещать», нагрузка на сотрудников</li>
         <li>Выгрузка сведений для Антифрод-центра и АФМ</li>
@@ -168,13 +185,13 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="block">
     <h2>Чего нет у других</h2>
-    <ul class="plain">
+    <div class="card"><ul class="plain">
       <li>Кнопка «вернуть отправителю» есть у некоторых банков, но автоматического перехвата пересылки чужих денег, апелляции в приложении и соразмерной блокировки мы ни у кого не нашли.</li>
       <li>Системы поиска дропперов работают только для банка. «Чистый счёт» работает и с клиентом: объясняет, предупреждает и даёт сообщить самому.</li>
       <li>Подсказка сотруднику отличает невольного участника от организатора, а решение всегда остаётся за человеком.</li>
-    </ul>
+    </ul></div>
   </section>
 </main>
 <script src="/tour.js"></script>
