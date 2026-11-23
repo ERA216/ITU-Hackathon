@@ -148,7 +148,7 @@ def _missed_scheme(conn, p: dict, now: datetime, rng: random.Random):
                     cl = conn.execute("INSERT INTO clearances(case_id,client_id,code,issued_at) VALUES(?,?,?,?)",
                                       (fwd_case, p["sender"], f"{rng.getrandbits(32):08X}", decided.isoformat())).lastrowid
                     _ev(conn, decided, "system", "cleared", fwd_case, None,
-                        text=f"Выдана справка № ЧС-{decided.year}-{cl:05d}; в Антифрод-центр переданы сведения "
+                        text=f"Выдана справка № CB-{decided.year}-{cl:05d}; в Антифрод-центр переданы сведения "
                              "о снятии ограничений и выводе банка")
 
     # Звено 2: карта, на которой остались деньги. Апелляций от таких счетов не бывает.

@@ -28,7 +28,7 @@ ANALYST_PIN = os.environ.get("CA_ANALYST_PIN", "")      # для показа; �
 if not ANALYST_PIN:
     # На открытом хостинге код из README знает любой: там без заданного кода сервер придумывает свой.
     ANALYST_PIN = secrets.token_hex(4) if os.environ.get("CA_PUBLIC") == "1" else "2026"
-    print(f"[Чистый счёт] Код доступа аналитика: {ANALYST_PIN}  (задайте свой в CA_ANALYST_PIN)", flush=True)
+    print(f"[Clean Break] Код доступа аналитика: {ANALYST_PIN}  (задайте свой в CA_ANALYST_PIN)", flush=True)
 SESSION_HOURS = 8
 MAX_SESSIONS = 5000
 PIN_TRIES_PER_IP = 5            # неверных кодов в минуту с одного адреса
@@ -172,7 +172,7 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="Чистый счёт: защита от статуса дроппера", dependencies=[Depends(tx, scope="function")],
+app = FastAPI(title="Clean Break: защита от статуса дроппера", dependencies=[Depends(tx, scope="function")],
               lifespan=lifespan, redoc_url=None,
               description="API прототипа: экран клиента, панель сотрудника банка и показатели. Методы клиента требуют "
                           "входа под персонажем из списка (POST /login), методы сотрудника — входа с кодом доступа.")
@@ -340,9 +340,9 @@ def _demo_refresher():
         try:
             why = _refresh_reason()
             if why and refresh_demo_in_background(only_if_idle=why == "idle"):
-                print(f"[Чистый счёт] Демо-данные обновлены в фоне ({'данные почти устарели' if why == 'age' else 'демо меняли, а на сайте никого нет'})", flush=True)
+                print(f"[Clean Break] Демо-данные обновлены в фоне ({'данные почти устарели' if why == 'age' else 'демо меняли, а на сайте никого нет'})", flush=True)
         except Exception as e:      # поток не должен падать: при ошибке попробует снова через DEMO_REFRESH_CHECK
-            print(f"[Чистый счёт] Не удалось обновить демо-данные: {e!r}", flush=True)
+            print(f"[Clean Break] Не удалось обновить демо-данные: {e!r}", flush=True)
 
 
 ensure_demo()
@@ -1516,7 +1516,7 @@ def _issue_clearance(case):
 
 
 def _clearance_number(cid: int, issued_at: str) -> str:
-    return f"ЧС-{issued_at[:4]}-{cid:05d}"
+    return f"CB-{issued_at[:4]}-{cid:05d}"
 
 
 def _clearance_view(case_id: int) -> dict | None:
@@ -1529,7 +1529,7 @@ def _clearance_view(case_id: int) -> dict | None:
 
 def _page(title: str, body: str) -> RawResponse:
     html_doc = f"""<!DOCTYPE html><html lang="{i18n.lang.get()}"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z' fill='%2300ab75'/%3E%3Cpath d='m8.5 12 2.5 2.5 4.5-5' fill='none' stroke='%23fff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"><link rel="stylesheet" href="/fonts/fonts.css"><title>{escape(title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='7.25 8 52 52'%3E%3Cpath d='M8 26 20 14l6 12z' fill='%237ad9b4'/%3E%3Cpath d='M20 14h12l-6 12z' fill='%23c9eedf'/%3E%3Cpath d='M26 26l6-12v12z' fill='%2300ab75'/%3E%3Cpath d='M8 26h18l6 30z' fill='%2300ab75'/%3E%3Cpath d='M26 26h6v30z' fill='%2300875c'/%3E%3Cg transform='translate(2.5 -2)'%3E%3Cpath d='M32 14l6 12h-6z' fill='%2300875c'/%3E%3Cpath d='M32 14h12l-6 12z' fill='%237ad9b4'/%3E%3Cpath d='M44 14l12 12H38z' fill='%2300ab75'/%3E%3Cpath d='M32 26h6L32 56z' fill='%230f3d2e'/%3E%3Cpath d='M38 26h18L32 56z' fill='%2300875c'/%3E%3C/g%3E%3C/svg%3E"><link rel="stylesheet" href="/fonts/fonts.css"><title>{escape(title)}</title>
 <style>body{{margin:0;background:#f5f5fa;color:#1d1d1e;font:16px/1.5 "Roboto Flex",Roboto,"Segoe UI",system-ui,-apple-system,sans-serif}}
 main{{max-width:720px;margin:24px auto;background:#fff;border:0;border-radius:16px;padding:28px 24px}}
 @media (max-width:752px){{main{{margin:16px;padding:22px 18px}}}}

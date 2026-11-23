@@ -817,7 +817,7 @@ def _unblock_seller():
 def test_certificate_is_issued_on_unblock_and_verifiable():
     seller, a, case = _unblock_seller()
     cert = seller.get(f"/clients/{SELLER}/case").json()["certificate"]
-    assert cert["valid"] and cert["number"].startswith("ЧС-")
+    assert cert["valid"] and cert["number"].startswith("CB-")
     page = seller.get(f"/clients/{SELLER}/certificate")
     assert page.status_code == 200 and cert["number"] in page.text and cert["code"] in page.text
     assert "юридической силы" in page.text
@@ -1973,6 +1973,7 @@ def test_landing_client_screen_and_tour_script_are_served():
     c = TestClient(main.app)
     home = c.get("/")
     assert home.status_code == 200 and "Показ за 3 минуты" in home.text and 'src="/tour.js"' in home.text
+    assert "<title>Clean Break</title>" in home.text and "<h1>Чужие деньги&nbsp;— не&nbsp;ваша&nbsp;проблема</h1>" in home.text
     assert "x-frame-options" in home.headers
     assert 'id="who"' in c.get("/client").text                         # экран клиента переехал на /client
     js = c.get("/tour.js")
