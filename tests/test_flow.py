@@ -221,6 +221,8 @@ def test_analyst_can_reset_demo():
     assert an.post("/demo/reset").status_code == 200
     assert account(an, STUDENT)["balance"] == 192000
     assert st.get(f"/clients/{STUDENT}").status_code == 401     # клиентские сессии сброшены
+    # Экран клиента после этого сам входит под тем же персонажем и повторяет действие, а не пишет «Войдите как клиент».
+    assert "r.status === 401 && me && path !== '/login'" in TestClient(main.app).get("/client").text
 
 
 # ---------- Апелляция и документы ----------

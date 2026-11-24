@@ -891,6 +891,11 @@ async function api(path, body, retried) {
     await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role: 'client', client_id: me})});
     return api(path, body, true);
   }
+  // Вход пропал (кнопка «Начать заново», автосброс демо, перезапуск сервера): входим под тем же персонажем и повторяем.
+  if (r.status === 401 && me && path !== '/login' && path !== '/me' && !retried) {
+    const l = await fetch('/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role: 'client', client_id: me})});
+    if (l.ok) return api(path, body, true);
+  }
   if (!r.ok) { const e = new Error(typeof data.detail === 'string' ? data.detail : tr('requestError')); e.status = r.status; throw e; }
   return data;
 }
