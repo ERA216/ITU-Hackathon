@@ -10,7 +10,8 @@
 </p>
 
 <p align="center">
-<a href="https://itu-hackathon.onrender.com"><b>Открыть сайт</b></a> · <a href="https://itu-hackathon.onrender.com/client">Экран клиента</a> · <a href="https://itu-hackathon.onrender.com/analyst">Панель сотрудника банка</a>
+<a href="https://itu-hackathon.onrender.com"><b>Открыть сайт</b></a> · <a href="https://itu-hackathon.onrender.com/client">Экран клиента</a> · <a href="https://itu-hackathon.onrender.com/analyst">Панель сотрудника банка</a><br>
+Код для входа в панель сотрудника на сайте: <b>20262025</b>
 </p>
 
 ![Стартовая страница Clean Break](docs/img/landing.jpg)
@@ -107,7 +108,7 @@
 
 ## Попробовать
 
-Откройте [itu-hackathon.onrender.com](https://itu-hackathon.onrender.com) — кнопка **«Показ за 3 минуты»** на стартовой странице проводит по проекту сама: 12 шагов от предупреждения клиенту до панели сотрудника и журнала. На экране клиента можно войти под любым из 20 персонажей:
+Откройте [itu-hackathon.onrender.com](https://itu-hackathon.onrender.com) — кнопка **«Показ за 3 минуты»** на стартовой странице проводит по проекту сама: 12 шагов от предупреждения клиенту до панели сотрудника и журнала. На шагах сотрудника банка введите код **20262025**. На экране клиента можно войти под любым из 20 персонажей:
 
 | Персонаж | Что показать |
 | --- | --- |
@@ -156,7 +157,7 @@ pip install -r requirements.txt
 uvicorn app.main:app
 ```
 
-Откройте http://127.0.0.1:8000 и нажмите «Показ за 3 минуты». Код сотрудника банка — `2026`.
+Откройте http://127.0.0.1:8000 и нажмите «Показ за 3 минуты». Код сотрудника банка при запуске на своём компьютере — `2026`.
 
 Тесты: `python -m pytest -q`.
 
